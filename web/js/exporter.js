@@ -33,35 +33,56 @@ async function pickH264Config(width, height, bitrate, framerate) {
   return null;
 }
 
-async function pickAacConfig(sampleRate = 48000, numberOfChannels = 2) {
+async function pickAudioEncoderConfig() {
   if (typeof AudioEncoder === "undefined" || typeof AudioData === "undefined") {
     return null;
   }
-  const cfg = { codec: "mp4a.40.2", sampleRate, numberOfChannels, bitrate: 128_000 };
-  try {
-    const sup = await AudioEncoder.isConfigSupported(cfg);
-    if (sup.supported) return cfg;
-  } catch {
-    return null;
+  const candidates = [
+    {
+      muxerCodec: "aac",
+      config: { codec: "mp4a.40.2", sampleRate: 48000, numberOfChannels: 2, bitrate: 128_000, aac: { format: "aac" } },
+    },
+    {
+      muxerCodec: "aac",
+      config: { codec: "mp4a.40.2", sampleRate: 44100, numberOfChannels: 2, bitrate: 128_000, aac: { format: "aac" } },
+    },
+    {
+      muxerCodec: "aac",
+      config: { codec: "mp4a.40.2", sampleRate: 48000, numberOfChannels: 2, bitrate: 128_000 },
+    },
+    {
+      muxerCodec: "opus",
+      config: { codec: "opus", sampleRate: 48000, numberOfChannels: 2, bitrate: 128_000 },
+    },
+  ];
+  for (const item of candidates) {
+    try {
+      const sup = await AudioEncoder.isConfigSupported(item.config);
+      if (sup && sup.supported) {
+        return { muxerCodec: item.muxerCodec, config: sup.config || item.config };
+      }
+    } catch {
+      // try next codec candidate
+    }
   }
   return null;
 }
 
 /**
  * Render an AudioBuffer (starting at `startOffsetSec`, looped/trimmed to `durationSec`,
- * resampled to 48kHz stereo with 0.65s fade-out) and feed it through WebCodecs AudioEncoder.
+ * resampled to target sampleRate stereo with 0.65s fade-out) and feed it through WebCodecs AudioEncoder.
  */
-async function encodeBgmAudioTrack(muxer, audioBuffer, durationSec, volume = 0.8, startOffsetSec = 0) {
-  const sampleRate = 48000;
-  const numChannels = 2;
-  const aacCfg = await pickAacConfig(sampleRate, numChannels);
-  if (!aacCfg || !audioBuffer || durationSec <= 0.1) return false;
+async function encodeBgmAudioTrack(muxer, audioSpec, audioBuffer, durationSec, volume = 0.8, startOffsetSec = 0) {
+  if (!audioSpec || !audioBuffer || durationSec <= 0.1) return { ok: false, chunks: 0, error: "no_audio" };
+  const sampleRate = audioSpec.config.sampleRate || 48000;
+  const numChannels = audioSpec.config.numberOfChannels || 2;
 
   const totalSamples = Math.ceil(durationSec * sampleRate);
   const offline = new OfflineAudioContext(numChannels, totalSamples, sampleRate);
   const src = offline.createBufferSource();
   src.buffer = audioBuffer;
-  const offset = Math.max(0, Math.min(Math.max(0, audioBuffer.duration - 0.2), Number(startOffsetSec) || 0));
+  const maxOffset = Math.max(0, audioBuffer.duration - 0.15);
+  const offset = Math.max(0, Math.min(maxOffset, Number(startOffsetSec) || 0));
   src.loop = true;
   src.loopStart = offset;
   src.loopEnd = audioBuffer.duration;
@@ -82,29 +103,40 @@ async function encodeBgmAudioTrack(muxer, audioBuffer, durationSec, volume = 0.8
   const ch1 = rendered.numberOfChannels > 1 ? rendered.getChannelData(1) : ch0;
 
   let audioErr = null;
+  let chunkCount = 0;
   const audioEncoder = new AudioEncoder({
-    output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+    output: (chunk, meta) => {
+      try {
+        muxer.addAudioChunk(chunk, meta);
+        chunkCount += 1;
+      } catch (err) {
+        audioErr = err;
+      }
+    },
     error: (err) => {
       audioErr = err;
     },
   });
-  audioEncoder.configure(aacCfg);
+  audioEncoder.configure(audioSpec.config);
 
   const chunkFrames = 1024;
-  for (let offset = 0; offset < rendered.length; offset += chunkFrames) {
+  for (let samplePos = 0; samplePos < rendered.length; samplePos += chunkFrames) {
     if (audioErr) throw audioErr;
-    const count = Math.min(chunkFrames, rendered.length - offset);
+    while (audioEncoder.encodeQueueSize > 16) {
+      await new Promise((r) => setTimeout(r, 4));
+    }
+    const count = Math.min(chunkFrames, rendered.length - samplePos);
     // f32-planar layout: all ch0 samples followed by all ch1 samples
     const planar = new Float32Array(count * 2);
-    planar.set(ch0.subarray(offset, offset + count), 0);
-    planar.set(ch1.subarray(offset, offset + count), count);
+    planar.set(ch0.subarray(samplePos, samplePos + count), 0);
+    planar.set(ch1.subarray(samplePos, samplePos + count), count);
 
     const ad = new AudioData({
       format: "f32-planar",
       sampleRate,
       numberOfFrames: count,
       numberOfChannels: 2,
-      timestamp: Math.round((offset / sampleRate) * 1_000_000),
+      timestamp: Math.round((samplePos / sampleRate) * 1_000_000),
       data: planar,
     });
     audioEncoder.encode(ad);
@@ -114,7 +146,7 @@ async function encodeBgmAudioTrack(muxer, audioBuffer, durationSec, volume = 0.8
   await audioEncoder.flush();
   audioEncoder.close();
   if (audioErr) throw audioErr;
-  return true;
+  return { ok: chunkCount > 0, chunks: chunkCount, codec: audioSpec.muxerCodec };
 }
 
 function makeCanvas(w, h) {
@@ -152,16 +184,28 @@ async function exportWithWebCodecs(
   if (!encoderConfig) return null;
 
   const hasBgm = !!(audioOptions && audioOptions.audioBuffer);
-  const canEncodeAudio = hasBgm && !!(await pickAacConfig(48000, 2));
+  const audioSpec = hasBgm ? await pickAudioEncoderConfig() : null;
+  // If user added music but this browser lacks WebCodecs AudioEncoder (AAC/Opus),
+  // return null so MediaRecorder fallback can mix and record the BGM track!
+  if (hasBgm && !audioSpec) {
+    console.warn("WebCodecs AudioEncoder unavailable; falling back to MediaRecorder with audio stream.");
+    return null;
+  }
+  const canEncodeAudio = !!audioSpec;
 
   const target = new ArrayBufferTarget();
   const muxerOpts = {
     target,
     video: { codec: "avc", width, height },
     fastStart: "in-memory",
+    firstTimestampBehavior: "offset",
   };
   if (canEncodeAudio) {
-    muxerOpts.audio = { codec: "aac", numberOfChannels: 2, sampleRate: 48000 };
+    muxerOpts.audio = {
+      codec: audioSpec.muxerCodec,
+      numberOfChannels: audioSpec.config.numberOfChannels || 2,
+      sampleRate: audioSpec.config.sampleRate || 48000,
+    };
   }
   const muxer = new Muxer(muxerOpts);
 
@@ -262,18 +306,24 @@ async function exportWithWebCodecs(
   if (encodeError) throw encodeError;
 
   let audioIncluded = false;
+  let audioCodec = null;
   if (canEncodeAudio) {
     const totalDurationSec = frameIndex / streamFps;
     try {
-      audioIncluded = await encodeBgmAudioTrack(
+      const res = await encodeBgmAudioTrack(
         muxer,
+        audioSpec,
         audioOptions.audioBuffer,
         totalDurationSec,
         audioOptions.volume,
         audioOptions.startOffsetSec || 0
       );
+      audioIncluded = !!res.ok;
+      audioCodec = res.codec || null;
     } catch (err) {
-      console.warn("Audio muxing skipped:", err);
+      console.error("Audio muxing failed:", err);
+      // If muxer was configured with an audio track that failed, return null so MediaRecorder fallback can include audio
+      return null;
     }
   }
 
@@ -282,19 +332,65 @@ async function exportWithWebCodecs(
     blob: new Blob([target.buffer], { type: "video/mp4" }),
     ext: "mp4",
     audioIncluded,
+    audioCodec,
   };
 }
 
-async function exportWithMediaRecorder(enabledItems, settings, lang, batchColorTarget, customStickerImg, onProgress) {
+async function exportWithMediaRecorder(
+  enabledItems,
+  settings,
+  lang,
+  batchColorTarget,
+  customStickerImg,
+  audioOptions,
+  onProgress
+) {
   const [rawW, rawH] = getCanvasSize(settings);
   const width = rawW - (rawW % 2);
   const height = rawH - (rawH % 2);
   const canvas = makeCanvas(width, height);
-  const stream = canvas.captureStream(30);
+  const videoStream = canvas.captureStream(30);
 
-  const mimeCandidates = ["video/mp4;codecs=avc1", "video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
+  let combinedStream = videoStream;
+  let audioCtx = null;
+  let audioSrc = null;
+  let audioIncluded = false;
+
+  const hasBgm = !!(audioOptions && audioOptions.audioBuffer);
+  if (hasBgm && typeof (window.AudioContext || window.webkitAudioContext) !== "undefined") {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new Ctx();
+      if (audioCtx.state === "suspended") await audioCtx.resume();
+      const dest = audioCtx.createMediaStreamDestination();
+      audioSrc = audioCtx.createBufferSource();
+      audioSrc.buffer = audioOptions.audioBuffer;
+      const maxOff = Math.max(0, audioOptions.audioBuffer.duration - 0.15);
+      const offset = Math.max(0, Math.min(maxOff, Number(audioOptions.startOffsetSec) || 0));
+      audioSrc.loop = true;
+      audioSrc.loopStart = offset;
+      audioSrc.loopEnd = audioOptions.audioBuffer.duration;
+      const gain = audioCtx.createGain();
+      gain.gain.value = Math.max(0.01, Math.min(1, Number(audioOptions.volume) || 0.8));
+      audioSrc.connect(gain);
+      gain.connect(dest);
+      combinedStream = new MediaStream([...videoStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+      audioSrc.start(0, offset);
+      audioIncluded = true;
+    } catch (err) {
+      console.warn("MediaRecorder audio mix unavailable:", err);
+    }
+  }
+
+  const mimeCandidates = [
+    "video/mp4;codecs=avc1,mp4a.40.2",
+    "video/mp4;codecs=avc1",
+    "video/webm;codecs=vp9,opus",
+    "video/webm;codecs=vp8,opus",
+    "video/webm",
+  ];
   const mimeType = mimeCandidates.find((m) => window.MediaRecorder?.isTypeSupported(m)) || "";
-  const recorder = new MediaRecorder(stream, mimeType ? { mimeType, videoBitsPerSecond: 6_000_000 } : undefined);
+  const recorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, videoBitsPerSecond: 6_000_000 } : undefined);
 
   const chunks = [];
   recorder.ondataavailable = (e) => {
@@ -303,11 +399,18 @@ async function exportWithMediaRecorder(enabledItems, settings, lang, batchColorT
 
   const done = new Promise((resolve) => {
     recorder.onstop = () => {
+      if (audioSrc) {
+        try { audioSrc.stop(); } catch {}
+      }
+      if (audioCtx) {
+        try { audioCtx.close(); } catch {}
+      }
       const isMp4 = (mimeType || "").includes("mp4");
       resolve({
         blob: new Blob(chunks, { type: isMp4 ? "video/mp4" : "video/webm" }),
         ext: isMp4 ? "mp4" : "webm",
-        audioIncluded: false,
+        audioIncluded,
+        audioCodec: audioIncluded ? (isMp4 ? "aac" : "opus") : null,
       });
     };
   });
@@ -317,6 +420,10 @@ async function exportWithMediaRecorder(enabledItems, settings, lang, batchColorT
   const msPerPhoto = Math.round(1000 / Math.max(1, Number(settings.fps) || 6));
   const milestoneMs = Math.round((Number(settings.milestoneHoldSec) || 0.8) * 1000);
   const holdMs = Math.round((Number(settings.holdLastSec) || 0) * 1000);
+  const customDurations =
+    audioOptions && Array.isArray(audioOptions.photoDurationsSec) && audioOptions.photoDurationsSec.length === totalEnabled
+      ? audioOptions.photoDurationsSec
+      : null;
 
   recorder.start();
   for (let i = 0; i < totalEnabled; i++) {
@@ -332,7 +439,10 @@ async function exportWithMediaRecorder(enabledItems, settings, lang, batchColorT
       progressRatio: (i + 1) / totalEnabled,
       customStickerImg,
     });
-    await new Promise((r) => setTimeout(r, msPerPhoto + (item.milestone ? milestoneMs : 0)));
+    const waitMs = customDurations
+      ? Math.max(60, Math.round(customDurations[i] * 1000))
+      : msPerPhoto + (item.milestone ? milestoneMs : 0);
+    await new Promise((r) => setTimeout(r, waitMs));
   }
   if (holdMs > 0) await new Promise((r) => setTimeout(r, holdMs));
   recorder.stop();
@@ -361,7 +471,7 @@ export async function exportTimelapseLocal(
     onProgress
   );
   if (wc) return wc;
-  return exportWithMediaRecorder(enabled, settings, lang, batchColorTarget, customStickerImg, onProgress);
+  return exportWithMediaRecorder(enabled, settings, lang, batchColorTarget, customStickerImg, audioOptions, onProgress);
 }
 
 /**
@@ -458,12 +568,22 @@ export async function exportWipeVideoLocal(
   }
 
   const hasBgm = !!(audioOptions && audioOptions.audioBuffer);
-  const canEncodeAudio = hasBgm && !!(await pickAacConfig(48000, 2));
+  const audioSpec = hasBgm ? await pickAudioEncoderConfig() : null;
+  const canEncodeAudio = !!audioSpec;
 
   const target = new ArrayBufferTarget();
-  const muxerOpts = { target, video: { codec: "avc", width, height }, fastStart: "in-memory" };
+  const muxerOpts = {
+    target,
+    video: { codec: "avc", width, height },
+    fastStart: "in-memory",
+    firstTimestampBehavior: "offset",
+  };
   if (canEncodeAudio) {
-    muxerOpts.audio = { codec: "aac", numberOfChannels: 2, sampleRate: 48000 };
+    muxerOpts.audio = {
+      codec: audioSpec.muxerCodec,
+      numberOfChannels: audioSpec.config.numberOfChannels || 2,
+      sampleRate: audioSpec.config.sampleRate || 48000,
+    };
   }
   const muxer = new Muxer(muxerOpts);
 
@@ -579,17 +699,22 @@ export async function exportWipeVideoLocal(
   encoder.close();
   if (encodeError) throw encodeError;
 
+  let audioIncluded = false;
+  let audioCodec = null;
   if (canEncodeAudio) {
     try {
-      await encodeBgmAudioTrack(
+      const res = await encodeBgmAudioTrack(
         muxer,
+        audioSpec,
         audioOptions.audioBuffer,
         totalFrames / streamFps,
         audioOptions.volume,
         audioOptions.startOffsetSec || 0
       );
-    } catch {
-      // fallback silently to video-only
+      audioIncluded = !!res.ok;
+      audioCodec = res.codec || null;
+    } catch (err) {
+      console.error("Wipe audio muxing failed:", err);
     }
   }
 
@@ -597,5 +722,7 @@ export async function exportWipeVideoLocal(
   return {
     blob: new Blob([target.buffer], { type: "video/mp4" }),
     ext: "mp4",
+    audioIncluded,
+    audioCodec,
   };
 }

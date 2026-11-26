@@ -1631,7 +1631,7 @@ function updateComparePreview() {
   }, "image/png");
 }
 
-function openExportResultModal(blob, filename, kind = "video") {
+function openExportResultModal(blob, filename, kind = "video", extraMeta = "") {
   if (state.lastExportUrl) URL.revokeObjectURL(state.lastExportUrl);
   const url = URL.createObjectURL(blob);
   state.lastExportUrl = url;
@@ -1650,7 +1650,10 @@ function openExportResultModal(blob, filename, kind = "video") {
     $("btnDownloadMp4").textContent = t("expDownloadGif");
   } else {
     gifImg.removeAttribute("src");
+    video.muted = false;
+    video.volume = 1.0;
     video.src = url;
+    video.play().catch(() => {});
     $("exportModalTitle").textContent = t("expModalTitle");
     $("btnDownloadMp4").textContent = t("expDownload");
   }
@@ -1658,7 +1661,7 @@ function openExportResultModal(blob, filename, kind = "video") {
   const dl = $("btnDownloadMp4");
   dl.href = url;
   dl.download = filename;
-  $("exportMeta").textContent = `${filename} · ${sizeMb} MB`;
+  $("exportMeta").textContent = `${filename} · ${sizeMb} MB${extraMeta ? ` · ${extraMeta}` : ""}`;
   $("exportModal").classList.remove("hidden");
   return sizeMb;
 }
@@ -1681,7 +1684,7 @@ async function handleExport() {
       photoDurationsSec: schedule.mode === "onset" || schedule.mode === "bpm" ? schedule.durationsSec : null,
     };
 
-    const { blob, ext } = await exportTimelapseLocal(
+    const { blob, ext, audioIncluded, audioCodec } = await exportTimelapseLocal(
       state.items,
       state.settings,
       state.lang,
@@ -1698,7 +1701,16 @@ async function handleExport() {
     );
 
     const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "").slice(0, 14);
-    const sizeMb = openExportResultModal(blob, `eachday_${stamp}.${ext}`, "video");
+    const audioNote = audioOpts.audioBuffer
+      ? audioIncluded
+        ? state.lang === "en"
+          ? `🔊 Music included (${(audioCodec || "AAC").toUpperCase()})`
+          : `🔊 已合入配乐 (${(audioCodec || "AAC").toUpperCase()})`
+        : state.lang === "en"
+        ? "⚠️ Browser does not support audio muxing"
+        : "⚠️ 当前浏览器不支持音频封装"
+      : "";
+    const sizeMb = openExportResultModal(blob, `eachday_${stamp}.${ext}`, "video", audioNote);
     showToast(t("stExportDone", sizeMb), 3500);
   } catch (err) {
     console.error(err);
@@ -1770,7 +1782,7 @@ async function handleExportWipeVideo() {
         }
       : null;
 
-    const { blob } = await exportWipeVideoLocal(
+    const { blob, audioIncluded, audioCodec } = await exportWipeVideoLocal(
       enabled[li],
       enabled[ri],
       li + 1,
@@ -1787,7 +1799,14 @@ async function handleExportWipeVideo() {
       }
     );
     const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "").slice(0, 14);
-    const sizeMb = openExportResultModal(blob, `eachday_wipe_${stamp}.mp4`, "video");
+    const audioNote = audioOpts
+      ? audioIncluded
+        ? state.lang === "en"
+          ? `🔊 Music included (${(audioCodec || "AAC").toUpperCase()})`
+          : `🔊 已合入配乐 (${(audioCodec || "AAC").toUpperCase()})`
+        : ""
+      : "";
+    const sizeMb = openExportResultModal(blob, `eachday_wipe_${stamp}.mp4`, "video", audioNote);
     showToast(t("stWipeDone", sizeMb), 3500);
   } catch (err) {
     console.error(err);

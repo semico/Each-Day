@@ -1,5 +1,5 @@
 /* EachDay Offline-First PWA Service Worker */
-const CACHE_NAME = "eachday-pwa-v1";
+const CACHE_NAME = "eachday-pwa-v2";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -64,9 +64,15 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Network-first with offline cache fallback for local app shell
+  // Always fetch fresh on localhost during local development
+  if (url.hostname === "127.0.0.1" || url.hostname === "localhost") {
+    event.respondWith(fetch(req, { cache: "no-store" }));
+    return;
+  }
+
+  // Network-first (revalidating HTTP cache) with offline cache fallback for app shell
   event.respondWith(
-    fetch(req)
+    fetch(req, { cache: "no-cache" })
       .then((resp) => {
         if (resp && resp.ok && url.origin === self.location.origin) {
           const copy = resp.clone();
