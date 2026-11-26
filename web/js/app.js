@@ -933,6 +933,7 @@ function updateWorkspaceVisibility() {
   $("emptyState").classList.toggle("hidden", has);
   $("canvasWorkspace").classList.toggle("hidden", !has);
   $("filmstripBar").classList.toggle("hidden", !has);
+  if ($("btnNewProject")) $("btnNewProject").classList.toggle("hidden", !has);
   if (has) requestAnimationFrame(fitPreviewFrameToViewport);
   $("btnExport").disabled = enabledCount === 0 || state.busy;
   $("btnExportGif").disabled = enabledCount === 0 || state.busy;
@@ -2277,13 +2278,30 @@ function bindEvents() {
     e.target.value = "";
   });
 
-  $("btnClearAll").addEventListener("click", () => {
+  $("btnNewProject").addEventListener("click", () => {
+    if (!state.items.length) return;
+    $("newProjectModal").classList.remove("hidden");
+  });
+
+  $("btnNewProjSaveFirst").addEventListener("click", () => {
+    saveProjectConfig();
+  });
+
+  $("btnConfirmNewProject").addEventListener("click", () => {
+    $("newProjectModal").classList.add("hidden");
     stopPlay();
+    stopAuditionBgm();
+    audioMgr.clear();
     state.items = [];
     state.selectedIndex = 0;
     state.colorRefId = null;
     state.batchColorTarget = null;
+    state.undoStack = [];
+    state.redoStack = [];
+    state.settings.bgmStartSec = 0;
+    persistSettings(state.settings);
     syncColorRefSelect();
+    syncSettingsUI();
     updateWorkspaceVisibility();
     renderInspector();
   });

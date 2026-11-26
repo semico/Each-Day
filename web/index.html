@@ -29,6 +29,9 @@
       </div>
 
       <div class="topbar-actions">
+        <button class="btn btn-secondary hidden" id="btnNewProject" type="button">
+          <span>✨</span> <span data-i18n="btnNewProject">新建项目</span>
+        </button>
         <label class="btn btn-secondary" for="folderInput">
           <span>📂</span> <span data-i18n="btnSelectFolder">选择文件夹</span>
         </label>
@@ -730,7 +733,6 @@
           <button class="btn btn-secondary btn-xs" id="btnSaveProject" type="button" data-i18n="btnSaveProject">💾 保存配置</button>
           <label class="btn btn-secondary btn-xs" for="projectInput" data-i18n="btnLoadProject">📥 导入配置</label>
           <label class="btn btn-secondary btn-xs" for="fileInput" data-i18n="btnAddMore">+ 追加照片</label>
-          <button class="btn btn-ghost btn-xs" id="btnClearAll" data-i18n="btnClearAll">清空重选</button>
           <select id="selSort" class="select-input select-sm">
             <option value="date_asc" data-i18n="sortDateAsc">按拍摄日期升序</option>
             <option value="date_desc" data-i18n="sortDateDesc">按拍摄日期降序</option>
@@ -840,6 +842,26 @@
         <div class="export-meta" id="exportMeta"></div>
         <div class="export-actions">
           <a class="btn btn-primary" id="btnDownloadMp4" download="eachday_timelapse.mp4" data-i18n="expDownload">⬇️ 保存视频到本地</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Confirm New Project -->
+  <div class="modal-backdrop hidden" id="newProjectModal">
+    <div class="modal">
+      <div class="modal-head">
+        <h3 data-i18n="newProjModalTitle">⚠️ 确认新建项目？</h3>
+        <button class="icon-close" data-close="newProjectModal">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc" data-i18n="newProjModalDesc">
+          当前项目中的所有照片、对齐微调、排序与配乐将被清空且无法恢复。如需保留当前进度，建议先保存配置。
+        </p>
+        <div class="export-actions">
+          <button class="btn btn-secondary" id="btnNewProjSaveFirst" type="button" data-i18n="btnNewProjSaveFirst">💾 先保存配置</button>
+          <button class="btn btn-ghost" data-close="newProjectModal" type="button" data-i18n="btnCancel">取消</button>
+          <button class="btn btn-danger" id="btnConfirmNewProject" type="button" data-i18n="btnConfirmNewProject">确认清空并新建</button>
         </div>
       </div>
     </div>

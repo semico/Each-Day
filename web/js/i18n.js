@@ -209,7 +209,12 @@ export const TRANSLATIONS = {
     btnSaveProject: "💾 保存配置",
     btnLoadProject: "📥 导入配置",
     btnAddMore: "+ 追加照片",
-    btnClearAll: "清空重选",
+    btnNewProject: "新建项目",
+    newProjModalTitle: "⚠️ 确认新建项目？",
+    newProjModalDesc: "当前项目中的所有照片、对齐微调、排序与配乐将被清空且无法恢复。如需保留当前进度，建议先点击「先保存配置」。",
+    btnNewProjSaveFirst: "💾 先保存配置",
+    btnCancel: "取消",
+    btnConfirmNewProject: "确认清空并新建",
     stSavedProject: "已保存项目配置 (.eachday.json)，仅含对齐参数不含原图",
     stLoadedProject: (matched, added) =>
       added > 0
@@ -474,7 +479,12 @@ export const TRANSLATIONS = {
     btnSaveProject: "💾 Save Config",
     btnLoadProject: "📥 Load Config",
     btnAddMore: "+ Add More",
-    btnClearAll: "Clear All",
+    btnNewProject: "New Project",
+    newProjModalTitle: "⚠️ Start a New Project?",
+    newProjModalDesc: "All photos, alignment tweaks, custom ordering, and loaded music in the current project will be lost. Click 'Save Config First' if you want to keep your progress.",
+    btnNewProjSaveFirst: "💾 Save Config First",
+    btnCancel: "Cancel",
+    btnConfirmNewProject: "Discard & Start New",
     stSavedProject: "Saved project config (.eachday.json) — settings & tweaks only, no photos",
     stLoadedProject: (matched, added) =>
       added > 0

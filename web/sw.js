@@ -1,5 +1,5 @@
 /* EachDay Offline-First PWA Service Worker */
-const CACHE_NAME = "eachday-pwa-v5";
+const CACHE_NAME = "eachday-pwa-v6";
 const APP_SHELL = [
   "./",
   "./index.html",

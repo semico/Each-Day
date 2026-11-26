@@ -22,13 +22,13 @@ export class LocalAudioManager {
 
     this._sourceNode = null;
     this._gainNode = null;
-    this._htmlAudio = null;
+    this._audioEl = null;
     this._playSeq = 0;
     this._isPlaying = false;
     this._startAudioCtxTime = 0;
     this._startPerfTime = 0;
     this._startOffsetSec = 0;
-    this._usingHtmlFallback = false;
+    this._usingHtmlAudio = false;
   }
 
   _ensureCtx() {
@@ -45,7 +45,7 @@ export class LocalAudioManager {
    */
   unlock() {
     const ctx = this._ensureCtx();
-    if (ctx.state === "suspended") {
+    if (ctx.state !== "running") {
       try {
         ctx.resume().catch(() => {});
       } catch {
@@ -68,11 +68,44 @@ export class LocalAudioManager {
     const arrayBuf = await file.arrayBuffer();
     const decoded = await ctx.decodeAudioData(arrayBuf.slice(0));
     this.stop();
+    if (this._audioEl) {
+      try {
+        this._audioEl.pause();
+        this._audioEl.removeAttribute("src");
+        this._audioEl.load();
+      } catch {
+        // ignore
+      }
+      this._audioEl = null;
+    }
     if (this.objectUrl) {
       URL.revokeObjectURL(this.objectUrl);
       this.objectUrl = null;
     }
     this.objectUrl = URL.createObjectURL(file);
+    // Pre-create & preload HTMLAudioElement for rock-solid synchronous Safari/iOS/Chrome playback
+    const el = new Audio();
+    el.preload = "auto";
+    el.playsInline = true;
+    el.src = this.objectUrl;
+    el.volume = this.volume;
+    el.addEventListener("ended", () => {
+      if (this._isPlaying && this._usingHtmlAudio && this._audioEl === el) {
+        try {
+          el.currentTime = this._startOffsetSec;
+          el.play().catch(() => {});
+        } catch {
+          // ignore
+        }
+      }
+    });
+    try {
+      el.load();
+    } catch {
+      // ignore
+    }
+    this._audioEl = el;
+
     this.audioBuffer = decoded;
     this.filename = file.name;
     this.duration = decoded.duration;
@@ -88,6 +121,16 @@ export class LocalAudioManager {
 
   clear() {
     this.stop();
+    if (this._audioEl) {
+      try {
+        this._audioEl.pause();
+        this._audioEl.removeAttribute("src");
+        this._audioEl.load();
+      } catch {
+        // ignore
+      }
+      this._audioEl = null;
+    }
     if (this.objectUrl) {
       URL.revokeObjectURL(this.objectUrl);
       this.objectUrl = null;
@@ -109,16 +152,16 @@ export class LocalAudioManager {
         this._gainNode.gain.value = this.volume;
       }
     }
-    if (this._htmlAudio) {
-      this._htmlAudio.volume = this.volume;
+    if (this._audioEl) {
+      this._audioEl.volume = this.volume;
     }
   }
 
   /**
-   * Reliable audio playback:
-   * - Calls AudioContext.resume() immediately inside the user-gesture call stack
-   * - Awaits resume cleanly before starting BufferSource (preventing silent starts in Chrome/Safari)
-   * - Automatically falls back to HTMLAudioElement if Web Audio remains suspended
+   * Reliable synchronous audio playback across Safari (macOS/iOS), Chrome, and Firefox:
+   * - Uses preloaded HTMLAudioElement.play() synchronously inside the click gesture
+   *   (avoids Safari WebKit AudioContext suspended/interrupted silence bugs!)
+   * - Automatically falls back to Web Audio BufferSource if HTMLAudioElement fails.
    */
   playLoop(startOffsetSec = 0) {
     if (!this.audioBuffer) return;
@@ -128,9 +171,41 @@ export class LocalAudioManager {
     const dur = Math.max(0.1, this.audioBuffer.duration);
     const offset = ((Number(startOffsetSec) || 0) % dur + dur) % dur;
 
+    this._startOffsetSec = offset;
+    this._startPerfTime = performance.now();
+    this._isPlaying = true;
+
+    // Primary live playback: synchronous HTMLAudioElement (100% reliable in Safari & Chrome!)
+    if (this._audioEl && this.objectUrl) {
+      try {
+        const el = this._audioEl;
+        el.muted = false;
+        el.volume = this.volume;
+        el.currentTime = offset;
+        this._usingHtmlAudio = true;
+        const p = el.play();
+        if (p && typeof p.catch === "function") {
+          p.catch((err) => {
+            if (seq !== this._playSeq || !this._isPlaying) return;
+            console.warn("HTMLAudio play failed, falling back to WebAudio:", err);
+            this._usingHtmlAudio = false;
+            this._playViaWebAudio(offset, dur, seq);
+          });
+        }
+        return;
+      } catch (err) {
+        console.warn("HTMLAudio sync start failed, falling back to WebAudio:", err);
+        this._usingHtmlAudio = false;
+      }
+    }
+
+    this._playViaWebAudio(offset, dur, seq);
+  }
+
+  _playViaWebAudio(offset, dur, seq) {
     const ctx = this._ensureCtx();
     let resumePromise = null;
-    if (ctx.state === "suspended") {
+    if (ctx.state !== "running") {
       try {
         resumePromise = ctx.resume();
       } catch {
@@ -138,61 +213,32 @@ export class LocalAudioManager {
       }
     }
 
-    const startWebAudio = () => {
-      if (seq !== this._playSeq || !this.audioBuffer) return;
-      if (ctx.state === "running") {
-        const src = ctx.createBufferSource();
-        src.buffer = this.audioBuffer;
-        src.loop = true;
-        src.loopStart = offset;
-        src.loopEnd = dur;
+    const startNode = () => {
+      if (seq !== this._playSeq || !this._isPlaying || !this.audioBuffer) return;
+      const src = ctx.createBufferSource();
+      src.buffer = this.audioBuffer;
+      src.loop = true;
+      src.loopStart = offset;
+      src.loopEnd = dur;
 
-        const gain = ctx.createGain();
-        gain.gain.value = this.volume;
+      const gain = ctx.createGain();
+      gain.gain.value = this.volume;
 
-        src.connect(gain);
-        gain.connect(ctx.destination);
-        src.start(0, offset);
+      src.connect(gain);
+      gain.connect(ctx.destination);
+      src.start(0, offset);
 
-        this._sourceNode = src;
-        this._gainNode = gain;
-        this._usingHtmlFallback = false;
-        this._isPlaying = true;
-        this._startAudioCtxTime = ctx.currentTime;
-        this._startPerfTime = performance.now();
-        this._startOffsetSec = offset;
-      } else {
-        this._startHtmlAudioFallback(offset, seq);
-      }
+      this._sourceNode = src;
+      this._gainNode = gain;
+      this._usingHtmlAudio = false;
+      this._startAudioCtxTime = ctx.currentTime;
+      this._startPerfTime = performance.now();
     };
 
     if (resumePromise) {
-      this._isPlaying = true;
-      this._startPerfTime = performance.now();
-      this._startOffsetSec = offset;
-      resumePromise
-        .then(startWebAudio)
-        .catch(() => this._startHtmlAudioFallback(offset, seq));
+      resumePromise.then(startNode).catch(() => {});
     } else {
-      startWebAudio();
-    }
-  }
-
-  _startHtmlAudioFallback(offset, seq) {
-    if (seq !== this._playSeq || !this.objectUrl) return;
-    try {
-      const el = new Audio(this.objectUrl);
-      el.loop = true;
-      el.volume = this.volume;
-      el.currentTime = offset;
-      this._htmlAudio = el;
-      this._usingHtmlFallback = true;
-      this._isPlaying = true;
-      this._startPerfTime = performance.now();
-      this._startOffsetSec = offset;
-      el.play().catch((err) => console.warn("HTMLAudio fallback play failed:", err));
-    } catch (err) {
-      console.warn("Audio fallback failed:", err);
+      startNode();
     }
   }
 
@@ -201,9 +247,9 @@ export class LocalAudioManager {
    */
   getPlaybackTime() {
     if (!this._isPlaying) return 0;
-    if (this._usingHtmlFallback && this._htmlAudio && !this._htmlAudio.paused) {
-      const elapsed = this._htmlAudio.currentTime - this._startOffsetSec;
-      return elapsed >= 0 ? elapsed : (performance.now() - this._startPerfTime) / 1000;
+    if (this._usingHtmlAudio && this._audioEl && !this._audioEl.paused) {
+      const elapsed = this._audioEl.currentTime - this._startOffsetSec;
+      if (elapsed >= -0.05) return Math.max(0, elapsed);
     }
     if (this.audioCtx && this._sourceNode && this.audioCtx.state === "running") {
       return Math.max(0, this.audioCtx.currentTime - this._startAudioCtxTime);
@@ -216,6 +262,9 @@ export class LocalAudioManager {
    */
   getTrackPositionSec() {
     if (!this.duration) return 0;
+    if (this._usingHtmlAudio && this._audioEl && !this._audioEl.paused) {
+      return Math.max(0, Math.min(this.duration, this._audioEl.currentTime));
+    }
     const elapsed = this.getPlaybackTime();
     const span = Math.max(0.1, this.duration - this._startOffsetSec);
     return this._startOffsetSec + (elapsed % span);
@@ -224,7 +273,7 @@ export class LocalAudioManager {
   stop() {
     this._playSeq += 1;
     this._isPlaying = false;
-    this._usingHtmlFallback = false;
+    this._usingHtmlAudio = false;
     if (this._sourceNode) {
       try {
         this._sourceNode.stop();
@@ -242,14 +291,12 @@ export class LocalAudioManager {
       }
       this._gainNode = null;
     }
-    if (this._htmlAudio) {
+    if (this._audioEl) {
       try {
-        this._htmlAudio.pause();
-        this._htmlAudio.src = "";
+        this._audioEl.pause();
       } catch {
         // ignore
       }
-      this._htmlAudio = null;
     }
   }
 

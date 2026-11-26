@@ -315,6 +315,8 @@ html, body {
 .btn:disabled { opacity: 0.42; cursor: not-allowed; }
 .btn-primary { background: var(--accent); color: #fff; }
 .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+.btn-danger { background: #dc2626; color: #fff; }
+.btn-danger:hover:not(:disabled) { background: #b91c1c; }
 .btn-secondary { background: var(--surface-2); border-color: var(--border); }
 .btn-secondary:hover:not(:disabled) { background: #252d3f; border-color: var(--border-strong); }
 .btn-ghost { color: var(--text-muted); }
