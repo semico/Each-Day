@@ -452,8 +452,10 @@ export async function exportWipeVideoLocal(
   const noBarSettings = { ...settings, showProgressBar: false };
   const leftCanvas = makeCanvas(width, height);
   const rightCanvas = makeCanvas(width, height);
+  const totalEst = Math.max(leftSeq, rightSeq, 1);
   renderAlignedToCanvas(leftCanvas, leftItem, noBarSettings, {
     seqIndex: leftSeq,
+    totalEnabled: totalEst,
     firstTimestamp: firstTs,
     drawGuides: false,
     lang,
@@ -462,6 +464,7 @@ export async function exportWipeVideoLocal(
   });
   renderAlignedToCanvas(rightCanvas, rightItem, noBarSettings, {
     seqIndex: rightSeq,
+    totalEnabled: totalEst,
     firstTimestamp: firstTs,
     drawGuides: false,
     lang,

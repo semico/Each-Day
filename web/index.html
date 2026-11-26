@@ -124,6 +124,21 @@
           </section>
 
           <section class="card">
+            <h3 class="card-title" data-i18n="secBokeh">景深背景虚化</h3>
+            <label class="switch-row">
+              <span data-i18n="lblBgBokeh">突出主体 · 背景虚化</span>
+              <input type="checkbox" id="chkBgBokeh" />
+            </label>
+            <div id="bokehStrengthRow" class="control-row mt-8 hidden">
+              <div class="control-head">
+                <label data-i18n="lblBokehStrength">虚化强度</label>
+                <span class="val" id="valBokehStrength">60%</span>
+              </div>
+              <input type="range" id="rngBokehStrength" min="0.20" max="1.00" step="0.05" value="0.60" />
+            </div>
+          </section>
+
+          <section class="card">
             <h3 class="card-title" data-i18n="secColorMatch">光线与色调统一</h3>
             <label class="switch-row">
               <span data-i18n="lblColorMatch">自动统一亮度与白平衡</span>
@@ -197,8 +212,23 @@
               <label class="small-label" data-i18n="lblBgMask">背景路人打码</label>
               <div class="seg-group" id="bgMaskGroup">
                 <button class="seg-btn active" data-val="none" data-i18n="bgMaskNone">关闭</button>
-                <button class="seg-btn" data-val="blur" data-i18n="bgMaskBlur">自动模糊</button>
+                <button class="seg-btn" data-val="blur" data-i18n="bgMaskBlur">模糊</button>
                 <button class="seg-btn" data-val="mosaic" data-i18n="bgMaskMosaic">马赛克</button>
+                <button class="seg-btn" data-val="emoji" data-i18n="bgMaskEmoji">贴纸</button>
+              </div>
+            </div>
+            <div id="bgEmojiPickerRow" class="sticker-panel hidden">
+              <div class="emoji-row">
+                <button class="emoji-btn active" data-bg-emoji="😶" type="button">😶</button>
+                <button class="emoji-btn" data-bg-emoji="🙂" type="button">🙂</button>
+                <button class="emoji-btn" data-bg-emoji="🕶️" type="button">🕶️</button>
+                <button class="emoji-btn" data-bg-emoji="🤖" type="button">🤖</button>
+                <button class="emoji-btn" data-bg-emoji="👻" type="button">👻</button>
+                <button class="emoji-btn" data-bg-emoji="🌸" type="button">🌸</button>
+                <button class="emoji-btn" data-bg-emoji="⭐" type="button">⭐</button>
+              </div>
+              <div class="mt-6">
+                <input type="text" id="txtBgEmoji" class="text-input" placeholder="路人贴纸 (如 😶 / 🤖)" maxlength="10" />
               </div>
             </div>
           </section>
@@ -220,14 +250,48 @@
             </label>
             <div id="watermarkOptions" class="mt-8">
               <div class="control-row">
-                <label class="small-label" data-i18n="lblWmStyle">样式</label>
+                <label class="small-label" data-i18n="lblLabelTheme">视觉风格</label>
+                <div class="seg-group seg-grid-3" id="labelThemeGroup">
+                  <button class="seg-btn active" data-val="pill" data-i18n="themePill">磨砂胶囊</button>
+                  <button class="seg-btn" data-val="magazine" data-i18n="themeMagazine">杂志封面</button>
+                  <button class="seg-btn" data-val="minimal" data-i18n="themeMinimal">极简大字</button>
+                  <button class="seg-btn" data-val="film" data-i18n="themeFilm">35mm胶片</button>
+                  <button class="seg-btn" data-val="sports" data-i18n="themeSports">运动标签</button>
+                </div>
+              </div>
+              <div id="magazineTitleRow" class="control-row mt-8 hidden">
+                <label class="small-label" data-i18n="lblMagTitle">杂志刊头标题</label>
+                <input type="text" id="txtMagazineTitle" class="text-input" value="EACHDAY" maxlength="20" placeholder="如 EACHDAY / VOGUE / MY LIFE" />
+              </div>
+              <div class="control-row mt-8">
+                <label class="small-label" data-i18n="lblWmStyle">文案内容</label>
                 <select id="selWmStyle" class="select-input">
                   <option value="day_date" data-i18n="wmDayDate">Day 01 · 2026.05.12</option>
                   <option value="count_date" data-i18n="wmCountDate">第 1 次 · 2026.05.12</option>
                   <option value="date_only" data-i18n="wmDateOnly">仅日期 (2026.05.12)</option>
                   <option value="day_only" data-i18n="wmDayOnly">仅累计天数 (Day 01)</option>
                   <option value="custom" data-i18n="wmCustom">自定义前缀标签</option>
+                  <option value="template" data-i18n="wmTemplate">自定义模板 ({day}/{date})</option>
                 </select>
+              </div>
+              <div id="templateBox" class="custom-label-box hidden">
+                <label class="small-label" data-i18n="lblTemplate">模板表达式（点击下方变量插入）</label>
+                <input type="text" id="txtLabelTemplate" class="text-input mt-6" value="Day {n2} · {date}" maxlength="64" />
+                <div class="preset-chips token-chips mt-6">
+                  <button class="preset-chip token-chip" type="button" data-token="{n2}">{n2}</button>
+                  <button class="preset-chip token-chip" type="button" data-token="{day}">{day}</button>
+                  <button class="preset-chip token-chip" type="button" data-token="{date}">{date}</button>
+                  <button class="preset-chip token-chip" type="button" data-token="{mm}.{dd}">{mm}.{dd}</button>
+                  <button class="preset-chip token-chip" type="button" data-token="{total}">{total}</button>
+                  <button class="preset-chip token-chip" type="button" data-token="{pct}">{pct}</button>
+                </div>
+                <label class="small-label mt-8" style="display:block" data-i18n="lblTemplatePresets">常用模板</label>
+                <div class="preset-chips mt-6">
+                  <button class="preset-chip tpl-preset-chip" type="button" data-tpl="ISSUE {n2} · {date}">ISSUE {n2}</button>
+                  <button class="preset-chip tpl-preset-chip" type="button" data-tpl="DAY {day} / {total} ({pct})">DAY {day}/{total}</button>
+                  <button class="preset-chip tpl-preset-chip" type="button" data-tpl="第 {day} 天 · {mm}.{dd}">第 {day} 天</button>
+                  <button class="preset-chip tpl-preset-chip" type="button" data-tpl="{yyyy}.{mm}.{dd} #{n2}">{yyyy}.{mm}.{dd}</button>
+                </div>
               </div>
               <div id="customLabelBox" class="custom-label-box hidden">
                 <label class="small-label" data-i18n="lblCustomPrefix">标签前缀</label>
@@ -247,7 +311,7 @@
                   <input type="checkbox" id="chkCustomDate" checked />
                 </label>
               </div>
-              <div class="control-row mt-8">
+              <div id="wmPosRow" class="control-row mt-8">
                 <label class="small-label" data-i18n="lblWmPos">位置</label>
                 <select id="selWmPos" class="select-input">
                   <option value="bottom_left" data-i18n="posBL">左下角</option>
@@ -417,7 +481,6 @@
         <div class="canvas-workspace hidden" id="canvasWorkspace">
           <div class="stage-toolbar">
             <div class="toolbar-group">
-              <button class="chip-btn" id="btnPlay" data-i18n="btnPlay">▶ 播放预览</button>
               <button class="chip-btn active" id="btnGuides" data-i18n="btnGuides">✚ 对齐辅助线</button>
               <button class="chip-btn" id="btnOnion" data-i18n="btnOnion">◐ 叠影对照</button>
               <button class="chip-btn undo-btn" id="btnUndo" type="button" disabled title="Undo">↶</button>
@@ -434,10 +497,13 @@
             </div>
           </div>
 
-          <div class="stage-nav">
-            <button class="btn btn-ghost" id="btnPrev" data-i18n="btnPrev">← 上一张</button>
-            <span class="shortcut-hint" data-i18n="shortcutHint">方向键切图 · 空格播放 · G 辅助线 · O 叠影 · X 跳过</span>
-            <button class="btn btn-ghost" id="btnNext" data-i18n="btnNext">下一张 →</button>
+          <div class="stage-footer">
+            <div class="stage-nav">
+              <button class="btn btn-ghost" id="btnPrev" data-i18n="btnPrev">← 上一张</button>
+              <button class="play-main-btn" id="btnPlay" type="button" data-i18n="btnPlay">▶ 播放预览</button>
+              <button class="btn btn-ghost" id="btnNext" data-i18n="btnNext">下一张 →</button>
+            </div>
+            <div class="shortcut-hint stage-shortcut-row" data-i18n="shortcutHint">←/→ 切图 · 空格播放 · G 辅助线 · O 叠影 · M 标星 · Cmd+Z 撤销</div>
           </div>
         </div>
       </section>

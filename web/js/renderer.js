@@ -2,13 +2,15 @@ import { getColorAdjustedCanvas } from "./color.js";
 
 /**
  * Hardware-accelerated HTML5 Canvas renderer:
- *   - Multi-mode canonical targets (body / face / 2-point custom)
+ *   - Multi-mode canonical targets (body / face / object / 2-point custom)
  *   - Optional Auto Exposure & Color Consistency Match
- *   - Natural Gaussian blur fill with feathered borders
- *   - Automatic privacy face masks & emoji stickers (self + background strangers)
- *   - Customizable date / day / custom-prefix frosted pill watermarks
+ *   - Optional Subject Depth-of-Field Background Bokeh Blur
+ *   - Natural Gaussian blur edge fill with feathered borders
+ *   - Automatic privacy face masks & stickers (self + bystanders: emoji/text/image/blur/mosaic)
+ *   - 5 Editorial Label Themes (Pill, Magazine Cover, Minimal Bold, 35mm Film Stamp, Sports Tag)
+ *   - Custom Label Template engine ({n}, {n2}, {day}, {date}, {yyyy}, {mm}, {dd}, {total}, {pct})
  *   - Sleek timeline progress bar overlay
- *   - High-resolution Before / After side-by-side comparison card generator
+ *   - High-resolution Before / After Comparison & Progress Grid Poster generators
  */
 
 export function getCanvasSize(settings) {
@@ -56,15 +58,12 @@ export function getCanonicalTarget(cw, ch, settings) {
   let neckYRatio = 0.295;
   let torsoRatio = 0.245;
   if (aspect > 1.05) {
-    // Landscape (4:3, 16:9)
     neckYRatio = 0.27;
     torsoRatio = 0.34;
   } else if (aspect >= 0.85) {
-    // Square (1:1)
     neckYRatio = 0.28;
     torsoRatio = 0.33;
   } else if (aspect >= 0.65) {
-    // 3:4 or 4:5
     neckYRatio = 0.285;
     torsoRatio = 0.285;
   }
@@ -75,12 +74,36 @@ export function getCanonicalTarget(cw, ch, settings) {
   };
 }
 
-export function formatWatermark(item, seqIndex, firstTs, settings, lang = "zh") {
+export function formatWatermark(item, seqIndex, totalEnabled, firstTs, settings, lang = "zh") {
   if (!settings.showWatermark) return "";
   const elapsedDays = Math.max(1, Math.floor((item.timestamp - firstTs) / 86400) + 1);
   const seq2 = String(seqIndex).padStart(2, "0");
+  const day2 = String(elapsedDays).padStart(2, "0");
+  const parts = (item.dateStr || "2026.01.01").split(".");
+  const yyyy = parts[0] || "2026";
+  const mm = parts[1] || "01";
+  const dd = parts[2] || "01";
+  const pct = `${Math.round((seqIndex / Math.max(1, totalEnabled)) * 100)}%`;
+  const stem = (item.filename || "").replace(/\.[^.]+$/, "");
 
   switch (settings.watermarkStyle) {
+    case "template": {
+      const tpl = (settings.labelTemplate || "Day {n2} · {date}").trim();
+      if (!tpl) return "";
+      return tpl
+        .replace(/\{n2\}/gi, seq2)
+        .replace(/\{n\}/gi, String(seqIndex))
+        .replace(/\{day2\}/gi, day2)
+        .replace(/\{day\}/gi, String(elapsedDays))
+        .replace(/\{date\}/gi, item.dateStr)
+        .replace(/\{yyyy\}/gi, yyyy)
+        .replace(/\{yy\}/gi, yyyy.slice(-2))
+        .replace(/\{mm\}/gi, mm)
+        .replace(/\{dd\}/gi, dd)
+        .replace(/\{total\}/gi, String(totalEnabled))
+        .replace(/\{pct\}/gi, pct)
+        .replace(/\{name\}/gi, stem);
+    }
     case "custom": {
       const prefix = (settings.customPrefix || "Day ").trimEnd();
       const counter = settings.customUseElapsed ? String(elapsedDays) : seq2;
@@ -93,18 +116,24 @@ export function formatWatermark(item, seqIndex, firstTs, settings, lang = "zh") 
     case "date_only":
       return item.dateStr;
     case "day_only":
-      return `Day ${String(elapsedDays).padStart(2, "0")}`;
+      return `Day ${day2}`;
     case "day_date":
     default:
       return `Day ${seq2}  ·  ${item.dateStr}`;
   }
 }
 
-// Reusable scratch canvases for blur-fill, feathering, and face privacy masking
+// Reusable scratch canvases for blur-fill, bokeh depth-of-field, feathering, and privacy masking
 let blurTinyCanvas = null;
 let blurTinyCtx = null;
 let fgScratchCanvas = null;
 let fgScratchCtx = null;
+let bokehBlurCanvas = null;
+let bokehBlurCtx = null;
+let bokehTinyCanvas = null;
+let bokehTinyCtx = null;
+let bokehMaskCanvas = null;
+let bokehMaskCtx = null;
 let maskPatchCanvas = null;
 let maskPatchCtx = null;
 
@@ -150,9 +179,221 @@ function drawRoundedRectPath(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-function drawWatermark(ctx, cw, ch, text, position) {
+function splitHeadlineSub(text) {
+  for (const sep of [" · ", "  ·  ", " | ", " // ", " - "]) {
+    if (text.includes(sep)) {
+      const idx = text.indexOf(sep);
+      return [text.slice(0, idx).trim(), text.slice(idx + sep.length).trim()];
+    }
+  }
+  return [text, ""];
+}
+
+function drawStyledLabel(ctx, cw, ch, text, settings, item) {
   if (!text) return;
+  const theme = settings.labelTheme || "pill";
+  const position = settings.watermarkPosition || "bottom_left";
   const shortSide = Math.min(cw, ch);
+
+  if (theme === "magazine") {
+    // Vogue / Kinfolk Editorial Magazine Cover Style
+    const [head, sub] = splitHeadlineSub(text);
+    const masthead = (settings.magazineTitle || "EACHDAY").trim().toUpperCase() || "EACHDAY";
+    ctx.save();
+
+    // Top subtle editorial dark vignette so masthead is ultra-legible
+    const topGrad = ctx.createLinearGradient(0, 0, 0, ch * 0.24);
+    topGrad.addColorStop(0, "rgba(0, 0, 0, 0.62)");
+    topGrad.addColorStop(1, "rgba(0, 0, 0, 0)");
+    ctx.fillStyle = topGrad;
+    ctx.fillRect(0, 0, cw, ch * 0.24);
+
+    // Bottom subtle vignette for issue/date tagline
+    const botGrad = ctx.createLinearGradient(0, ch * 0.78, 0, ch);
+    botGrad.addColorStop(0, "rgba(0, 0, 0, 0)");
+    botGrad.addColorStop(1, "rgba(0, 0, 0, 0.68)");
+    ctx.fillStyle = botGrad;
+    ctx.fillRect(0, ch * 0.78, cw, ch * 0.22);
+
+    // Thin inner magazine border frame
+    const inset = Math.round(shortSide * 0.028);
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.28)";
+    ctx.lineWidth = Math.max(1, Math.round(shortSide * 0.002));
+    ctx.strokeRect(inset, inset, cw - inset * 2, ch - inset * 2);
+
+    // Masthead serif headline at top center
+    const titleSize = Math.max(24, Math.round(shortSide * 0.105));
+    ctx.font = `800 ${titleSize}px Georgia, "Times New Roman", "Songti SC", serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.shadowColor = "rgba(0,0,0,0.45)";
+    ctx.shadowBlur = 12;
+    ctx.fillStyle = "rgba(255, 255, 255, 0.94)";
+    const spaced = masthead.split("").join(" ");
+    ctx.fillText(spaced, cw * 0.5, inset + Math.round(shortSide * 0.028), cw - inset * 4);
+
+    // Issue headline + date at bottom
+    const mainSize = Math.max(18, Math.round(shortSide * 0.056));
+    const subSize = Math.max(12, Math.round(shortSide * 0.028));
+    const bottomY = ch - inset - Math.round(shortSide * 0.045);
+
+    ctx.shadowBlur = 8;
+    ctx.textBaseline = "bottom";
+    if (sub) {
+      ctx.font = `600 ${subSize}px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif`;
+      ctx.fillStyle = "rgba(255, 255, 255, 0.78)";
+      ctx.fillText(sub.toUpperCase(), cw * 0.5, bottomY);
+
+      ctx.font = `700 ${mainSize}px Georgia, "Times New Roman", "Songti SC", serif`;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(head.toUpperCase(), cw * 0.5, bottomY - subSize - Math.round(shortSide * 0.014));
+    } else {
+      ctx.font = `700 ${mainSize}px Georgia, "Times New Roman", "Songti SC", serif`;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(head.toUpperCase(), cw * 0.5, bottomY);
+    }
+    ctx.restore();
+    return;
+  }
+
+  if (theme === "film") {
+    // Classic Retro 35mm Quartz Camera Timestamp (Kodak/Fuji amber glow)
+    const fontSize = Math.max(15, Math.round(shortSide * 0.04));
+    const marginX = Math.round(shortSide * 0.052);
+    const marginY = Math.round(shortSide * 0.05);
+    const [head, sub] = splitHeadlineSub(text);
+    const parts = (item?.dateStr || "2026.01.01").split(".");
+    const stamp = sub ? `'${(parts[0] || "26").slice(-2)} ${parts[1] || "01"} ${parts[2] || "01"}  ${head}` : text;
+
+    ctx.save();
+    ctx.font = `700 ${fontSize}px "Courier New", ui-monospace, SFMono-Regular, Menlo, monospace`;
+    ctx.textBaseline = "middle";
+    let tx = marginX;
+    let ty = ch - marginY - fontSize * 0.5;
+    if (position === "bottom_center") {
+      ctx.textAlign = "center";
+      tx = cw * 0.5;
+    } else if (position === "top_left") {
+      ctx.textAlign = "left";
+      ty = marginY + fontSize * 0.5;
+    } else if (position === "top_right") {
+      ctx.textAlign = "right";
+      tx = cw - marginX;
+      ty = marginY + fontSize * 0.5;
+    } else {
+      ctx.textAlign = "left";
+    }
+    ctx.shadowColor = "rgba(255, 110, 0, 0.85)";
+    ctx.shadowBlur = Math.max(6, fontSize * 0.35);
+    ctx.fillStyle = "#ff8c2b";
+    ctx.fillText(stamp, tx, ty);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "#ffd08a";
+    ctx.fillText(stamp, tx, ty);
+    ctx.restore();
+    return;
+  }
+
+  if (theme === "minimal") {
+    // Clean Editorial Big Typography (zero background box)
+    const [head, sub] = splitHeadlineSub(text);
+    const bigSize = Math.max(18, Math.round(shortSide * 0.056));
+    const smallSize = Math.max(12, Math.round(shortSide * 0.026));
+    const marginX = Math.round(shortSide * 0.055);
+    const marginY = Math.round(shortSide * 0.055);
+
+    ctx.save();
+    ctx.shadowColor = "rgba(0, 0, 0, 0.65)";
+    ctx.shadowBlur = 10;
+    ctx.shadowOffsetY = 2;
+
+    let align = "left";
+    let tx = marginX;
+    let isTop = false;
+    if (position === "bottom_center") {
+      align = "center";
+      tx = cw * 0.5;
+    } else if (position === "top_left") {
+      isTop = true;
+    } else if (position === "top_right") {
+      align = "right";
+      tx = cw - marginX;
+      isTop = true;
+    }
+    ctx.textAlign = align;
+
+    if (isTop) {
+      ctx.textBaseline = "top";
+      ctx.font = `800 ${bigSize}px -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif`;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(head, tx, marginY);
+      if (sub) {
+        ctx.font = `500 ${smallSize}px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif`;
+        ctx.fillStyle = "rgba(255,255,255,0.82)";
+        ctx.fillText(sub, tx, marginY + bigSize + 4);
+      }
+    } else {
+      ctx.textBaseline = "bottom";
+      if (sub) {
+        ctx.font = `500 ${smallSize}px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif`;
+        ctx.fillStyle = "rgba(255,255,255,0.82)";
+        ctx.fillText(sub, tx, ch - marginY);
+        ctx.font = `800 ${bigSize}px -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif`;
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(head, tx, ch - marginY - smallSize - 4);
+      } else {
+        ctx.font = `800 ${bigSize}px -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif`;
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(head, tx, ch - marginY);
+      }
+    }
+    ctx.restore();
+    return;
+  }
+
+  if (theme === "sports") {
+    // Sharp Athletic Neon Accent Bar Tag
+    const fontSize = Math.max(13, Math.round(shortSide * 0.036));
+    ctx.save();
+    ctx.font = `800 ${fontSize}px -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif`;
+    ctx.textBaseline = "middle";
+    const display = text.toUpperCase();
+    const tw = ctx.measureText(display).width;
+    const stripeW = Math.max(4, Math.round(fontSize * 0.22));
+    const padX = Math.round(fontSize * 0.65);
+    const padY = Math.round(fontSize * 0.42);
+    const boxW = Math.round(tw + padX * 2 + stripeW);
+    const boxH = Math.round(fontSize * 1.15 + padY * 2);
+    const marginX = Math.round(shortSide * 0.048);
+    const marginY = Math.round(shortSide * 0.048);
+
+    let px = marginX;
+    let py = ch - marginY - boxH;
+    if (position === "bottom_center") px = Math.round((cw - boxW) * 0.5);
+    else if (position === "top_left") py = marginY;
+    else if (position === "top_right") {
+      px = cw - marginX - boxW;
+      py = marginY;
+    }
+
+    drawRoundedRectPath(ctx, px, py, boxW, boxH, 6);
+    ctx.fillStyle = "rgba(9, 13, 22, 0.78)";
+    ctx.fill();
+
+    // Vibrant emerald-blue accent stripe on left
+    const stripeGrad = ctx.createLinearGradient(0, py, 0, py + boxH);
+    stripeGrad.addColorStop(0, "#3b82f6");
+    stripeGrad.addColorStop(1, "#10b981");
+    ctx.fillStyle = stripeGrad;
+    ctx.fillRect(px, py, stripeW, boxH);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(display, px + stripeW + padX * 0.9, py + boxH * 0.53);
+    ctx.restore();
+    return;
+  }
+
+  // Default: "pill" (Signature Dark Frosted Pill)
   const fontSize = Math.max(13, Math.round(shortSide * 0.036));
   ctx.save();
   ctx.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Helvetica Neue", sans-serif`;
@@ -181,7 +422,7 @@ function drawWatermark(ctx, cw, ch, text, position) {
   drawRoundedRectPath(ctx, px, py, pillW, pillH, pillH * 0.5);
   ctx.fillStyle = "rgba(12, 14, 18, 0.64)";
   ctx.fill();
-  ctx.lineWidth = Math.max(1, cw / 720);
+  ctx.lineWidth = Math.max(1, shortSide / 720);
   ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
   ctx.stroke();
 
@@ -276,6 +517,131 @@ function mapSourceToCanvas(sx, sy, srcCx, srcCy, dstCx, dstCy, totalScale, rotRa
   };
 }
 
+/**
+ * Portrait Depth-of-Field Background Bokeh Blur:
+ * Keeps the locked subject (pose silhouette / face / object) razor sharp while applying
+ * creamy optical bokeh blur to the surrounding background.
+ */
+function applySubjectDepthOfField(targetCanvas, item, settings, dstCx, dstCy, totalScale, rotRad) {
+  if (!settings.bgBokeh) return;
+  const strength = Math.max(0.15, Math.min(1.0, Number(settings.bgBokehStrength) || 0.6));
+  const cw = targetCanvas.width;
+  const ch = targetCanvas.height;
+
+  // 1. Create softly blurred full-frame bokeh layer via multi-step downscale/upscale (zero Safari filter quirks)
+  const blurScale = Math.max(0.045, 0.24 - strength * 0.17);
+  const bw = Math.max(28, Math.round(cw * blurScale));
+  const bh = Math.max(28, Math.round(ch * blurScale));
+
+  if (!bokehTinyCanvas || bokehTinyCanvas.width !== bw || bokehTinyCanvas.height !== bh) {
+    bokehTinyCanvas = document.createElement("canvas");
+    bokehTinyCanvas.width = bw;
+    bokehTinyCanvas.height = bh;
+    bokehTinyCtx = bokehTinyCanvas.getContext("2d");
+  }
+  bokehTinyCtx.imageSmoothingEnabled = true;
+  bokehTinyCtx.imageSmoothingQuality = "high";
+  bokehTinyCtx.drawImage(targetCanvas, 0, 0, bw, bh);
+
+  if (!bokehBlurCanvas || bokehBlurCanvas.width !== cw || bokehBlurCanvas.height !== ch) {
+    bokehBlurCanvas = document.createElement("canvas");
+    bokehBlurCanvas.width = cw;
+    bokehBlurCanvas.height = ch;
+    bokehBlurCtx = bokehBlurCanvas.getContext("2d");
+  }
+  bokehBlurCtx.imageSmoothingEnabled = true;
+  bokehBlurCtx.imageSmoothingQuality = "high";
+  bokehBlurCtx.drawImage(bokehTinyCanvas, 0, 0, bw, bh, 0, 0, cw, ch);
+
+  // 2. Build soft feathered foreground focus mask around the locked subject
+  if (!bokehMaskCanvas || bokehMaskCanvas.width !== cw || bokehMaskCanvas.height !== ch) {
+    bokehMaskCanvas = document.createElement("canvas");
+    bokehMaskCanvas.width = cw;
+    bokehMaskCanvas.height = ch;
+    bokehMaskCtx = bokehMaskCanvas.getContext("2d");
+  }
+  bokehMaskCtx.clearRect(0, 0, cw, ch);
+
+  const drawSoftBlob = (cx, cy, rx, ry) => {
+    const maxR = Math.max(12, Math.max(rx, ry));
+    bokehMaskCtx.save();
+    bokehMaskCtx.translate(cx, cy);
+    bokehMaskCtx.scale(rx / maxR, ry / maxR);
+    const grad = bokehMaskCtx.createRadialGradient(0, 0, maxR * 0.42, 0, 0, maxR);
+    grad.addColorStop(0, "rgba(255,255,255,1)");
+    grad.addColorStop(0.68, "rgba(255,255,255,0.92)");
+    grad.addColorStop(1, "rgba(255,255,255,0)");
+    bokehMaskCtx.fillStyle = grad;
+    bokehMaskCtx.beginPath();
+    bokehMaskCtx.arc(0, 0, maxR, 0, Math.PI * 2);
+    bokehMaskCtx.fill();
+    bokehMaskCtx.restore();
+  };
+
+  const t = item.transform;
+  const mapPt = (sx, sy) => mapSourceToCanvas(sx, sy, t.srcCx, t.srcCy, dstCx, dstCy, totalScale, rotRad);
+  const mode = settings.alignMode || "body";
+
+  let hasFocusRegion = false;
+
+  if (mode === "object" && item.objectCandidates && item.objectCandidates[item.selectedObject]) {
+    const [x1, y1, x2, y2] = item.objectCandidates[item.selectedObject].bbox;
+    const p1 = mapPt(x1, y1);
+    const p2 = mapPt(x2, y2);
+    const cx = (p1.x + p2.x) * 0.5;
+    const cy = (p1.y + p2.y) * 0.5;
+    const rx = Math.max(30, Math.abs(p2.x - p1.x) * 0.72);
+    const ry = Math.max(30, Math.abs(p2.y - p1.y) * 0.72);
+    drawSoftBlob(cx, cy, rx, ry);
+    hasFocusRegion = true;
+  } else if (item.candidates && item.candidates[item.selectedCandidate]) {
+    const cand = item.candidates[item.selectedCandidate];
+    const lm = cand.landmarks || {};
+    const [bx1, by1, bx2, by2] = cand.bbox;
+    const bwPx = Math.max(24, (bx2 - bx1) * totalScale);
+    const bhPx = Math.max(40, (by2 - by1) * totalScale);
+
+    // Organic multi-zone portrait matte following head + torso + hips/legs
+    const face = getCandidateFaceCenterAndSize(cand);
+    if (face) {
+      const fp = mapPt(face.cx, face.cy);
+      drawSoftBlob(fp.x, fp.y, face.w * totalScale * 0.92, face.h * totalScale * 0.95);
+    }
+    if (lm.neck && lm.root) {
+      const np = mapPt(lm.neck.x, lm.neck.y);
+      const rp = mapPt(lm.root.x, lm.root.y);
+      const torsoLen = Math.hypot(np.x - rp.x, np.y - rp.y);
+      const shWidth =
+        lm.left_shoulder && lm.right_shoulder
+          ? Math.hypot(lm.left_shoulder.x - lm.right_shoulder.x, lm.left_shoulder.y - lm.right_shoulder.y) * totalScale
+          : bwPx * 0.55;
+      // Upper chest & shoulders
+      drawSoftBlob((np.x + rp.x) * 0.5, (np.y + rp.y) * 0.48, shWidth * 0.92, torsoLen * 0.85);
+      // Hips & legs (extend below root smoothly)
+      drawSoftBlob(rp.x, rp.y + torsoLen * 0.65, shWidth * 0.78, torsoLen * 1.15);
+    } else {
+      const p1 = mapPt(bx1, by1);
+      const p2 = mapPt(bx2, by2);
+      drawSoftBlob((p1.x + p2.x) * 0.5, (p1.y + p2.y) * 0.5, bwPx * 0.68, bhPx * 0.68);
+    }
+    hasFocusRegion = true;
+  }
+
+  if (!hasFocusRegion) {
+    // Graceful center portrait falloff for 2-point / fallback mode
+    drawSoftBlob(dstCx, dstCy, Math.min(cw, ch) * 0.42, Math.min(cw, ch) * 0.52);
+  }
+
+  // 3. Cut out sharp subject area from bokehBlurCanvas (destination-out) and composite blurred background on top!
+  bokehBlurCtx.save();
+  bokehBlurCtx.globalCompositeOperation = "destination-out";
+  bokehBlurCtx.drawImage(bokehMaskCanvas, 0, 0);
+  bokehBlurCtx.restore();
+
+  const ctx = targetCanvas.getContext("2d");
+  ctx.drawImage(bokehBlurCanvas, 0, 0);
+}
+
 function applyOvalBlurOrMosaic(targetCanvas, cx, cy, rx, ry, mode) {
   const cw = targetCanvas.width;
   const ch = targetCanvas.height;
@@ -309,8 +675,49 @@ function applyOvalBlurOrMosaic(targetCanvas, cx, cy, rx, ry, mode) {
 }
 
 function isLikelyTextBadge(str) {
-  // Pure ASCII alphanumeric or Chinese/Japanese/Korean text (not a single emoji glyph)
   return /[A-Za-z0-9\u4e00-\u9fff]/.test(str);
+}
+
+function drawStickerAt(ctx, pos, dw, dh, stickerText, customImg) {
+  if (customImg && customImg.width > 0 && customImg.height > 0) {
+    const targetSize = Math.max(20, Math.max(dw, dh) * 1.18);
+    const imgAspect = customImg.width / customImg.height;
+    const drawW = imgAspect >= 1 ? targetSize : targetSize * imgAspect;
+    const drawH = imgAspect >= 1 ? targetSize / imgAspect : targetSize;
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(customImg, pos.x - drawW * 0.5, pos.y - drawH * 0.5, drawW, drawH);
+    ctx.restore();
+    return;
+  }
+
+  const txt = (stickerText || "😎").trim() || "😎";
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+  if (isLikelyTextBadge(txt)) {
+    const boxW = Math.max(26, dw * 1.15);
+    const boxH = Math.max(22, dh * 0.72);
+    const fontSize = Math.max(12, Math.min(boxH * 0.62, (boxW * 0.85) / Math.max(1, txt.length * 0.65)));
+    drawRoundedRectPath(ctx, -boxW * 0.5, -boxH * 0.5, boxW, boxH, boxH * 0.45);
+    ctx.fillStyle = "rgba(15, 20, 30, 0.92)";
+    ctx.fill();
+    ctx.lineWidth = Math.max(1.5, boxH * 0.05);
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+    ctx.stroke();
+    ctx.font = `700 ${Math.round(fontSize)}px -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(txt, 0, 1);
+  } else {
+    const size = Math.max(16, Math.max(dw, dh) * 1.08);
+    ctx.font = `${Math.round(size)}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(txt, 0, size * 0.04);
+  }
+  ctx.restore();
 }
 
 function applyPrivacyMasks(targetCanvas, item, settings, dstCx, dstCy, totalScale, rotRad, customStickerImg = null) {
@@ -340,45 +747,10 @@ function applyPrivacyMasks(targetCanvas, item, settings, dstCx, dstCy, totalScal
     }
 
     if (mode === "emoji") {
-      if (isSelf && customStickerImg && customStickerImg.width > 0 && customStickerImg.height > 0) {
-        // Draw uploaded custom image sticker preserving its natural aspect ratio
-        const targetSize = Math.max(20, Math.max(dw, dh) * 1.18);
-        const imgAspect = customStickerImg.width / customStickerImg.height;
-        const drawW = imgAspect >= 1 ? targetSize : targetSize * imgAspect;
-        const drawH = imgAspect >= 1 ? targetSize / imgAspect : targetSize;
-        ctx.save();
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "high";
-        ctx.drawImage(customStickerImg, pos.x - drawW * 0.5, pos.y - drawH * 0.5, drawW, drawH);
-        ctx.restore();
+      if (isSelf) {
+        drawStickerAt(ctx, pos, dw, dh, settings.selfEmoji || "😎", customStickerImg);
       } else {
-        const stickerText = (settings.selfEmoji || "😎").trim() || "😎";
-        ctx.save();
-        ctx.translate(pos.x, pos.y);
-        if (isLikelyTextBadge(stickerText)) {
-          // Render typed text as a clean bold badge covering the face
-          const boxW = Math.max(26, dw * 1.15);
-          const boxH = Math.max(22, dh * 0.72);
-          const fontSize = Math.max(12, Math.min(boxH * 0.62, (boxW * 0.85) / Math.max(1, stickerText.length * 0.65)));
-          drawRoundedRectPath(ctx, -boxW * 0.5, -boxH * 0.5, boxW, boxH, boxH * 0.45);
-          ctx.fillStyle = "rgba(15, 20, 30, 0.92)";
-          ctx.fill();
-          ctx.lineWidth = Math.max(1.5, boxH * 0.05);
-          ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
-          ctx.stroke();
-          ctx.font = `700 ${Math.round(fontSize)}px -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif`;
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillStyle = "#ffffff";
-          ctx.fillText(stickerText, 0, 1);
-        } else {
-          const size = Math.max(16, Math.max(dw, dh) * 1.08);
-          ctx.font = `${Math.round(size)}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText(stickerText, 0, size * 0.04);
-        }
-        ctx.restore();
+        drawStickerAt(ctx, pos, dw, dh, settings.bgEmoji || "😶", null);
       }
     } else if (mode === "blur" || mode === "mosaic") {
       applyOvalBlurOrMosaic(targetCanvas, pos.x, pos.y, dw * 0.56, dh * 0.62, mode);
@@ -389,10 +761,9 @@ function applyPrivacyMasks(targetCanvas, item, settings, dstCx, dstCy, totalScal
 function drawAlignmentGuides(ctx, cw, ch, targetX, targetY, targetSpanPx, mode) {
   ctx.save();
   ctx.strokeStyle = "rgba(96, 215, 255, 0.62)";
-  ctx.lineWidth = Math.max(1, cw / 540);
+  ctx.lineWidth = Math.max(1, Math.min(cw, ch) / 540);
 
   if (mode === "face") {
-    // Centerline + Eye Line + Left/Right Eye Targets
     ctx.beginPath();
     ctx.moveTo(targetX, 0);
     ctx.lineTo(targetX, ch);
@@ -408,7 +779,6 @@ function drawAlignmentGuides(ctx, cw, ch, targetX, targetY, targetSpanPx, mode) 
       ctx.stroke();
     }
   } else if (mode === "object") {
-    // Center crosshair + target subject framing box
     ctx.beginPath();
     ctx.moveTo(targetX, 0);
     ctx.lineTo(targetX, ch);
@@ -421,7 +791,6 @@ function drawAlignmentGuides(ctx, cw, ch, targetX, targetY, targetSpanPx, mode) 
     ctx.strokeRect(targetX - half, targetY - half, targetSpanPx, targetSpanPx);
     ctx.setLineDash([]);
   } else if (mode === "points") {
-    // Centerline + Horizontal A <-> B Anchor Targets
     ctx.beginPath();
     ctx.moveTo(targetX, 0);
     ctx.lineTo(targetX, ch);
@@ -429,8 +798,7 @@ function drawAlignmentGuides(ctx, cw, ch, targetX, targetY, targetSpanPx, mode) 
     ctx.lineTo(cw, targetY);
     ctx.stroke();
 
-    const r = Math.max(6, cw * 0.015);
-    ctx.fillStyle = "rgba(16, 185, 129, 0.9)";
+    const r = Math.max(6, Math.min(cw, ch) * 0.015);
     for (const sign of [-1, 1]) {
       const px = targetX + sign * targetSpanPx * 0.5;
       ctx.beginPath();
@@ -438,7 +806,6 @@ function drawAlignmentGuides(ctx, cw, ch, targetX, targetY, targetSpanPx, mode) 
       ctx.stroke();
     }
   } else {
-    // Body mode: Centerline + Neck Line + Hip Line + Head Circle
     ctx.beginPath();
     ctx.moveTo(targetX, 0);
     ctx.lineTo(targetX, ch);
@@ -459,19 +826,18 @@ function drawAlignmentGuides(ctx, cw, ch, targetX, targetY, targetSpanPx, mode) 
 
 function drawProgressBar(ctx, cw, ch, ratio, position = "top") {
   const clamped = Math.max(0.01, Math.min(1, Number(ratio) || 0));
-  const barH = Math.max(4, Math.round(cw * 0.008));
-  const padX = Math.round(cw * 0.045);
+  const shortSide = Math.min(cw, ch);
+  const barH = Math.max(4, Math.round(shortSide * 0.008));
+  const padX = Math.round(shortSide * 0.045);
   const trackW = cw - padX * 2;
-  const y = position === "bottom" ? ch - Math.round(ch * 0.018) - barH : Math.round(ch * 0.018);
+  const y = position === "bottom" ? ch - Math.round(shortSide * 0.018) - barH : Math.round(shortSide * 0.018);
   const fillW = Math.max(barH, Math.round(trackW * clamped));
 
   ctx.save();
-  // Translucent dark track
   drawRoundedRectPath(ctx, padX, y, trackW, barH, barH * 0.5);
   ctx.fillStyle = "rgba(255, 255, 255, 0.22)";
   ctx.fill();
 
-  // Gradient progress fill
   const grad = ctx.createLinearGradient(padX, 0, padX + trackW, 0);
   grad.addColorStop(0, "#3b82f6");
   grad.addColorStop(1, "#10b981");
@@ -479,7 +845,6 @@ function drawProgressBar(ctx, cw, ch, ratio, position = "top") {
   ctx.fillStyle = grad;
   ctx.fill();
 
-  // Subtle glowing indicator dot at the tip
   ctx.beginPath();
   ctx.arc(padX + fillW, y + barH * 0.5, barH * 0.72, 0, Math.PI * 2);
   ctx.fillStyle = "#ffffff";
@@ -550,12 +915,17 @@ export function renderAlignedToCanvas(
     drawFeatheredSource(ctx, srcCanvas, dstCx, dstCy, t.srcCx, t.srcCy, totalScale, rotRad, cw, ch);
   }
 
-  // Apply automatic privacy face masks / stickers before watermark
+  // Optional Portrait Depth-of-Field Background Bokeh Blur
+  if (settings.bgBokeh) {
+    applySubjectDepthOfField(targetCanvas, item, settings, dstCx, dstCy, totalScale, rotRad);
+  }
+
+  // Automatic privacy face masks & stickers (self + bystanders)
   applyPrivacyMasks(targetCanvas, item, settings, dstCx, dstCy, totalScale, rotRad, customStickerImg);
 
   if (settings.showWatermark) {
-    const text = formatWatermark(item, seqIndex, firstTimestamp, settings, lang);
-    drawWatermark(ctx, cw, ch, text, settings.watermarkPosition);
+    const text = formatWatermark(item, seqIndex, totalEnabled, firstTimestamp, settings, lang);
+    drawStyledLabel(ctx, cw, ch, text, settings, item);
   }
 
   if (settings.showProgressBar) {
@@ -599,6 +969,7 @@ export function renderComparisonCanvas(
   leftCanvas.height = panelH;
   renderAlignedToCanvas(leftCanvas, leftItem, noBarSettings, {
     seqIndex: leftSeq,
+    totalEnabled: Math.max(leftSeq, rightSeq),
     firstTimestamp: firstTs,
     drawGuides: false,
     lang,
@@ -611,6 +982,7 @@ export function renderComparisonCanvas(
   rightCanvas.height = panelH;
   renderAlignedToCanvas(rightCanvas, rightItem, noBarSettings, {
     seqIndex: rightSeq,
+    totalEnabled: Math.max(leftSeq, rightSeq),
     firstTimestamp: firstTs,
     drawGuides: false,
     lang,
@@ -621,7 +993,6 @@ export function renderComparisonCanvas(
   ctx.drawImage(leftCanvas, 0, 0);
   ctx.drawImage(rightCanvas, panelW + gap, 0);
 
-  // Center elapsed-days badge
   const days = Math.max(0, Math.round(Math.abs(rightItem.timestamp - leftItem.timestamp) / 86400));
   const badgeText =
     days > 0
@@ -632,7 +1003,7 @@ export function renderComparisonCanvas(
       ? "BEFORE  →  AFTER"
       : "前后对比";
 
-  const fontSize = Math.max(18, Math.round(panelW * 0.036));
+  const fontSize = Math.max(18, Math.round(Math.min(panelW, panelH) * 0.036));
   ctx.save();
   ctx.font = `700 ${fontSize}px -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif`;
   ctx.textBaseline = "middle";
@@ -659,8 +1030,7 @@ export function renderComparisonCanvas(
 }
 
 /**
- * Render a gallery-style Progress Grid Collage Poster PNG (2x2, 3x2, 3x3, or 4x3)
- * evenly sampling enabled photos from Day 1 to Latest Day.
+ * Render a gallery-style Progress Grid Collage Poster PNG (2x2, 3x2, 3x3, or 4x3).
  */
 export function renderGridPosterCanvas(
   enabledItems,
@@ -669,26 +1039,18 @@ export function renderGridPosterCanvas(
 ) {
   const total = enabledItems.length;
   const targetN = Math.min(total, gridCount);
-  const layouts = {
-    4: [2, 2],
-    6: [3, 2],
-    9: [3, 3],
-    12: [4, 3],
-  };
+  const layouts = { 4: [2, 2], 6: [3, 2], 9: [3, 3], 12: [4, 3] };
   let [cols, rows] = layouts[gridCount] || [3, 3];
   if (targetN < cols * rows) {
     cols = Math.min(cols, targetN);
     rows = Math.ceil(targetN / cols);
   }
 
-  // Evenly pick targetN indices including first and last
   const chosenIndices = [];
-  if (targetN === 1) {
-    chosenIndices.push(0);
-  } else {
+  if (targetN === 1) chosenIndices.push(0);
+  else {
     for (let i = 0; i < targetN; i++) {
-      const idx = Math.round((i * (total - 1)) / (targetN - 1));
-      chosenIndices.push(idx);
+      chosenIndices.push(Math.round((i * (total - 1)) / (targetN - 1)));
     }
   }
 
@@ -705,14 +1067,12 @@ export function renderGridPosterCanvas(
   out.height = headerH + rows * cellH + (rows - 1) * gap + footerH;
   const ctx = out.getContext("2d");
 
-  // Sleek dark editorial background
   const bgGrad = ctx.createLinearGradient(0, 0, 0, out.height);
   bgGrad.addColorStop(0, "#10141e");
   bgGrad.addColorStop(1, "#090b10");
   ctx.fillStyle = bgGrad;
   ctx.fillRect(0, 0, out.width, out.height);
 
-  // Header Title & Date Span Subtitle
   const first = enabledItems[0];
   const last = enabledItems[total - 1];
   const spanDays = Math.max(1, Math.round(Math.abs(last.timestamp - first.timestamp) / 86400) + 1);
@@ -768,7 +1128,6 @@ export function renderGridPosterCanvas(
     ctx.restore();
   });
 
-  // Subtle footer credit
   ctx.save();
   ctx.fillStyle = "rgba(148, 163, 184, 0.55)";
   ctx.font = `500 14px -apple-system, BlinkMacSystemFont, sans-serif`;

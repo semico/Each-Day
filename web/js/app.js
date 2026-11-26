@@ -30,14 +30,20 @@ const DEFAULT_SETTINGS = {
   verticalShift: 0.0,
   autoLevel: true,
   fillMode: "blur",
+  bgBokeh: false,
+  bgBokehStrength: 0.6,
   autoColorMatch: false,
   colorMatchStrength: 0.65,
   selfMask: "none", // "none" | "emoji" | "blur" | "mosaic"
   selfEmoji: "😎",
   maskScale: 1.15,
-  bgMask: "none", // "none" | "blur" | "mosaic"
+  bgMask: "none", // "none" | "blur" | "mosaic" | "emoji"
+  bgEmoji: "😶",
   showWatermark: true,
-  watermarkStyle: "day_date",
+  labelTheme: "pill", // "pill" | "magazine" | "minimal" | "film" | "sports"
+  magazineTitle: "EACHDAY",
+  watermarkStyle: "day_date", // "day_date" | "count_date" | "date_only" | "day_only" | "custom" | "template"
+  labelTemplate: "Day {n2} · {date}",
   customPrefix: "OOTD #",
   customUseElapsed: false,
   customShowDate: true,
@@ -128,6 +134,8 @@ function applyI18n() {
   $("btnLang").textContent = state.lang === "zh" ? "EN" : "中文";
   $("btnPrivacyInfo").title = t("privacyPillTitle");
   if ($("txtCustomSticker")) $("txtCustomSticker").placeholder = t("phCustomSticker");
+  if ($("txtBgEmoji")) $("txtBgEmoji").placeholder = t("phBgEmoji");
+  if ($("txtMagazineTitle")) $("txtMagazineTitle").placeholder = t("phMagTitle");
   if ($("btnUndo")) $("btnUndo").title = t("btnUndoTitle");
   if ($("btnRedo")) $("btnRedo").title = t("btnRedoTitle");
   if ($("txtPosterTitle") && !$("txtPosterTitle").dataset.edited) {
@@ -245,11 +253,17 @@ function syncSettingsUI() {
   setSeg("fillGroup", s.fillMode);
   setSeg("selfMaskGroup", s.selfMask);
   setSeg("bgMaskGroup", s.bgMask);
+  setSeg("labelThemeGroup", s.labelTheme || "pill");
   setSeg("progressPosRow", s.progressBarPos);
 
   document.querySelectorAll("#heroModeCards .mode-card").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.mode === s.alignMode);
   });
+
+  $("chkBgBokeh").checked = !!s.bgBokeh;
+  $("bokehStrengthRow").classList.toggle("hidden", !s.bgBokeh);
+  $("rngBokehStrength").value = s.bgBokehStrength;
+  $("valBokehStrength").textContent = `${Math.round(s.bgBokehStrength * 100)}%`;
 
   $("chkColorMatch").checked = !!s.autoColorMatch;
   $("colorMatchOptions").classList.toggle("hidden", !s.autoColorMatch);
@@ -258,12 +272,19 @@ function syncSettingsUI() {
   $("valColorStrength").textContent = `${Math.round(s.colorMatchStrength * 100)}%`;
 
   $("emojiPickerRow").classList.toggle("hidden", s.selfMask !== "emoji");
+  $("bgEmojiPickerRow").classList.toggle("hidden", s.bgMask !== "emoji");
   $("maskSizeRow").classList.toggle("hidden", s.selfMask === "none" && s.bgMask === "none");
   document.querySelectorAll("#emojiPickerRow .emoji-btn").forEach((btn) => {
     btn.classList.toggle("active", !state.customStickerImg && btn.dataset.emoji === s.selfEmoji);
   });
+  document.querySelectorAll("#bgEmojiPickerRow .emoji-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.bgEmoji === (s.bgEmoji || "😶"));
+  });
   if ($("txtCustomSticker") && document.activeElement !== $("txtCustomSticker")) {
     $("txtCustomSticker").value = state.customStickerImg ? "" : (s.selfEmoji || "");
+  }
+  if ($("txtBgEmoji") && document.activeElement !== $("txtBgEmoji")) {
+    $("txtBgEmoji").value = s.bgEmoji || "😶";
   }
   $("customStickerPreview").classList.toggle("hidden", !state.customStickerImg);
   if (state.customStickerUrl) $("customStickerThumb").src = state.customStickerUrl;
@@ -278,8 +299,18 @@ function syncSettingsUI() {
 
   $("chkWatermark").checked = !!s.showWatermark;
   $("watermarkOptions").classList.toggle("hidden", !s.showWatermark);
+  const curTheme = s.labelTheme || "pill";
+  $("magazineTitleRow").classList.toggle("hidden", curTheme !== "magazine");
+  if ($("txtMagazineTitle") && document.activeElement !== $("txtMagazineTitle")) {
+    $("txtMagazineTitle").value = s.magazineTitle || "EACHDAY";
+  }
+  $("wmPosRow").classList.toggle("hidden", curTheme === "magazine");
   $("selWmStyle").value = s.watermarkStyle;
   $("customLabelBox").classList.toggle("hidden", s.watermarkStyle !== "custom");
+  $("templateBox").classList.toggle("hidden", s.watermarkStyle !== "template");
+  if ($("txtLabelTemplate") && document.activeElement !== $("txtLabelTemplate")) {
+    $("txtLabelTemplate").value = s.labelTemplate || "Day {n2} · {date}";
+  }
   $("txtCustomPrefix").value = s.customPrefix;
   $("chkCustomElapsed").checked = !!s.customUseElapsed;
   $("chkCustomDate").checked = !!s.customShowDate;
@@ -2050,6 +2081,15 @@ function bindEvents() {
     btn.addEventListener("click", () => updateGlobalSetting({ fillMode: btn.dataset.val }, true))
   );
 
+  // Depth-of-Field Subject Background Bokeh
+  $("chkBgBokeh").addEventListener("change", (e) => {
+    updateGlobalSetting({ bgBokeh: e.target.checked }, true);
+  });
+  $("rngBokehStrength").addEventListener("input", (e) =>
+    updateGlobalSetting({ bgBokehStrength: parseFloat(e.target.value) }, false)
+  );
+  $("rngBokehStrength").addEventListener("change", () => state.items.length && renderFilmstrip());
+
   // Auto Exposure & Color Match
   $("chkColorMatch").addEventListener("change", (e) => {
     refreshBatchColorTarget();
@@ -2092,6 +2132,17 @@ function bindEvents() {
   document.querySelectorAll("#bgMaskGroup .seg-btn").forEach((btn) =>
     btn.addEventListener("click", () => updateGlobalSetting({ bgMask: btn.dataset.val }, true))
   );
+  document.querySelectorAll("#bgEmojiPickerRow .emoji-btn").forEach((btn) =>
+    btn.addEventListener("click", () =>
+      updateGlobalSetting({ bgMask: "emoji", bgEmoji: btn.dataset.bgEmoji }, true)
+    )
+  );
+  $("txtBgEmoji").addEventListener("input", (e) => {
+    const val = e.target.value.trim();
+    if (!val) return;
+    updateGlobalSetting({ bgMask: "emoji", bgEmoji: val }, false);
+  });
+  $("txtBgEmoji").addEventListener("change", () => state.items.length && renderFilmstrip());
   document.querySelectorAll("#emojiPickerRow .emoji-btn").forEach((btn) =>
     btn.addEventListener("click", () => {
       state.customStickerImg = null;
@@ -2165,12 +2216,42 @@ function bindEvents() {
 
   // Watermark & Progress Bar
   $("chkWatermark").addEventListener("change", (e) => updateGlobalSetting({ showWatermark: e.target.checked }, false));
+  document.querySelectorAll("#labelThemeGroup .seg-btn").forEach((btn) =>
+    btn.addEventListener("click", () => updateGlobalSetting({ labelTheme: btn.dataset.val }, false))
+  );
+  $("txtMagazineTitle").addEventListener("input", (e) =>
+    updateGlobalSetting({ magazineTitle: e.target.value }, false)
+  );
   $("selWmStyle").addEventListener("change", (e) => updateGlobalSetting({ watermarkStyle: e.target.value }, false));
   $("selWmPos").addEventListener("change", (e) => updateGlobalSetting({ watermarkPosition: e.target.value }, false));
+  $("txtLabelTemplate").addEventListener("input", (e) =>
+    updateGlobalSetting({ labelTemplate: e.target.value }, false)
+  );
+  document.querySelectorAll(".token-chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const inp = $("txtLabelTemplate");
+      const token = chip.dataset.token || "";
+      const start = inp.selectionStart ?? inp.value.length;
+      const end = inp.selectionEnd ?? inp.value.length;
+      const nextVal = inp.value.slice(0, start) + token + inp.value.slice(end);
+      inp.value = nextVal;
+      inp.focus();
+      const pos = start + token.length;
+      inp.setSelectionRange(pos, pos);
+      updateGlobalSetting({ watermarkStyle: "template", labelTemplate: nextVal }, false);
+    });
+  });
+  document.querySelectorAll(".tpl-preset-chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const tpl = chip.dataset.tpl || "Day {n2} · {date}";
+      $("txtLabelTemplate").value = tpl;
+      updateGlobalSetting({ watermarkStyle: "template", labelTemplate: tpl }, false);
+    });
+  });
   $("txtCustomPrefix").addEventListener("input", (e) => updateGlobalSetting({ customPrefix: e.target.value }, false));
   $("chkCustomElapsed").addEventListener("change", (e) => updateGlobalSetting({ customUseElapsed: e.target.checked }, false));
   $("chkCustomDate").addEventListener("change", (e) => updateGlobalSetting({ customShowDate: e.target.checked }, false));
-  document.querySelectorAll(".preset-chip").forEach((chip) => {
+  document.querySelectorAll("#customLabelBox .preset-chip").forEach((chip) => {
     chip.addEventListener("click", () => {
       updateGlobalSetting({ watermarkStyle: "custom", customPrefix: chip.dataset.prefix }, false);
     });
