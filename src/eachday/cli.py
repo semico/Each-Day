@@ -82,7 +82,7 @@ def main() -> None:
     # Optional headless CLI mode
     parser.add_argument("--headless", action="store_true", help="纯命令行模式：直接对齐并导出视频，不启动网页界面")
     parser.add_argument("--output", "-o", type=str, default=None, help="headless 模式下的输出 MP4 路径")
-    parser.add_argument("--aspect", choices=["9:16", "3:4", "4:5", "1:1"], default="9:16")
+    parser.add_argument("--aspect", choices=["9:16", "3:4", "4:5", "1:1", "4:3", "16:9"], default="9:16")
     parser.add_argument("--resolution", choices=["720p", "1080p"], default="1080p")
     parser.add_argument("--fps", type=float, default=6.0, help="每秒切换照片数 (默认 6)")
     parser.add_argument("--fill", choices=["blur", "black", "edge"], default="blur")
@@ -101,7 +101,7 @@ def main() -> None:
         folder = Path(args.folder).expanduser().resolve()
         files = scan_folder(folder, recursive=args.recursive)
         if files:
-            session.load_paths_and_analyze(files, source_label=str(folder), source_dir=folder)
+            session.register_startup_files(files, folder)
 
     port = _find_free_port(args.port)
     url = f"http://127.0.0.1:{port}"

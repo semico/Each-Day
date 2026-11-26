@@ -32,6 +32,9 @@
         <button class="btn btn-secondary hidden" id="btnNewProject" type="button">
           <span>✨</span> <span data-i18n="btnNewProject">新建项目</span>
         </button>
+        <button class="btn btn-secondary hidden" id="btnPhotosAlbum" type="button">
+          <span>🍎</span> <span data-i18n="btnPhotosAlbum">照片相簿</span>
+        </button>
         <label class="btn btn-secondary" for="folderInput">
           <span>📂</span> <span data-i18n="btnSelectFolder">选择文件夹</span>
         </label>
@@ -562,6 +565,9 @@
               <label class="btn btn-secondary btn-lg" for="folderInput">
                 <span>📂</span> <span data-i18n="btnHeroFolder">选择整个文件夹</span>
               </label>
+              <button class="btn btn-secondary btn-lg hidden" id="btnHeroPhotosAlbum" type="button">
+                <span>🍎</span> <span data-i18n="btnHeroPhotosAlbum">从 macOS 照片导入</span>
+              </button>
               <button class="btn btn-secondary btn-lg demo-btn" id="btnLoadDemo" type="button" data-i18n="btnTryDemo">
                 ✨ 体验示例
               </button>
@@ -843,6 +849,26 @@
         <div class="export-actions">
           <a class="btn btn-primary" id="btnDownloadMp4" download="eachday_timelapse.mp4" data-i18n="expDownload">⬇️ 保存视频到本地</a>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: macOS Photos App Album Picker (Local Desktop Server only) -->
+  <div class="modal-backdrop hidden" id="photosAlbumModal">
+    <div class="modal modal-wide">
+      <div class="modal-head">
+        <h3 data-i18n="photosModalTitle">🍎 从 macOS「照片」App 导入相簿</h3>
+        <button class="icon-close" data-close="photosAlbumModal">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc" data-i18n="photosModalDesc">
+          直接读取本机 macOS「照片」App 中的相簿原图（完整保留 EXIF 拍摄日期），全程 100% 本地运行。
+        </p>
+        <div class="album-search-row">
+          <input type="text" id="txtAlbumFilter" class="text-input" placeholder="筛选相簿名称..." />
+          <button class="btn btn-secondary btn-xs" id="btnRefreshAlbums" type="button" data-i18n="btnRefreshAlbums">刷新</button>
+        </div>
+        <div id="photosAlbumList" class="album-list mt-8"></div>
       </div>
     </div>
   </div>

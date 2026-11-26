@@ -101,7 +101,7 @@ class PhotoItem:
 
 @dataclass
 class RenderSettings:
-    aspect_ratio: Literal["9:16", "3:4", "4:5", "1:1"] = "9:16"
+    aspect_ratio: Literal["9:16", "3:4", "4:5", "1:1", "4:3", "16:9"] = "9:16"
     resolution: Literal["720p", "1080p"] = "1080p"
     zoom: float = 1.0  # Global framing zoom (0.65 .. 1.5)
     vertical_shift: float = 0.0  # Global vertical framing offset (-0.15 .. +0.15)
@@ -115,14 +115,16 @@ class RenderSettings:
     crossfade: bool = False  # Smooth crossfade between consecutive photos
 
     def canvas_size(self) -> tuple[int, int]:
-        base_w = 1080 if self.resolution == "1080p" else 720
+        base = 1080 if self.resolution == "1080p" else 720
         ratios = {
-            "9:16": (base_w, int(round(base_w * 16 / 9 / 2) * 2)),
-            "3:4": (base_w, int(round(base_w * 4 / 3 / 2) * 2)),
-            "4:5": (base_w, int(round(base_w * 5 / 4 / 2) * 2)),
-            "1:1": (base_w, base_w),
+            "9:16": (base, int(round(base * 16 / 9 / 2) * 2)),
+            "3:4": (base, int(round(base * 4 / 3 / 2) * 2)),
+            "4:5": (base, int(round(base * 5 / 4 / 2) * 2)),
+            "1:1": (base, base),
+            "4:3": (int(round(base * 4 / 3 / 2) * 2), base),
+            "16:9": (int(round(base * 16 / 9 / 2) * 2), base),
         }
-        return ratios.get(self.aspect_ratio, (base_w, int(round(base_w * 16 / 9 / 2) * 2)))
+        return ratios.get(self.aspect_ratio, (base, int(round(base * 16 / 9 / 2) * 2)))
 
     def to_dict(self) -> dict[str, Any]:
         w, h = self.canvas_size()

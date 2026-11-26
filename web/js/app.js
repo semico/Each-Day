@@ -124,6 +124,9 @@ const state = {
   redoStack: [],
   tapTimes: [],
   deferredInstallPrompt: null,
+  localServer: false,
+  localMacos: false,
+  photosAlbums: [],
   settings: loadSavedSettings(),
 };
 
@@ -158,6 +161,7 @@ function applyI18n() {
   if ($("txtCustomSticker")) $("txtCustomSticker").placeholder = t("phCustomSticker");
   if ($("txtBgEmoji")) $("txtBgEmoji").placeholder = t("phBgEmoji");
   if ($("txtMagazineTitle")) $("txtMagazineTitle").placeholder = t("phMagTitle");
+  if ($("txtAlbumFilter")) $("txtAlbumFilter").placeholder = t("phAlbumFilter");
   if ($("btnUndo")) $("btnUndo").title = t("btnUndoTitle");
   if ($("btnRedo")) $("btnRedo").title = t("btnRedoTitle");
   if ($("txtPosterTitle") && !$("txtPosterTitle").dataset.edited) {
@@ -2070,6 +2074,10 @@ function bindEvents() {
   });
 
   $("btnPrivacyInfo").addEventListener("click", () => $("privacyModal").classList.remove("hidden"));
+  $("btnPhotosAlbum")?.addEventListener("click", openPhotosAlbumModal);
+  $("btnHeroPhotosAlbum")?.addEventListener("click", openPhotosAlbumModal);
+  $("btnRefreshAlbums")?.addEventListener("click", openPhotosAlbumModal);
+  $("txtAlbumFilter")?.addEventListener("input", renderPhotosAlbumList);
   $("btnCompare").addEventListener("click", openCompareModal);
   $("btnExportGif").addEventListener("click", handleExportGif);
   $("btnExportWipe").addEventListener("click", handleExportWipeVideo);
@@ -2756,6 +2764,125 @@ function bindEvents() {
   bindPreviewInteractions();
 }
 
+// Local Desktop Server Bridge (macOS Photos App Album Import + CLI --folder auto-load)
+async function fetchLocalFilesAsFileObjects(fileEntries) {
+  const out = [];
+  for (let i = 0; i < fileEntries.length; i++) {
+    const ent = fileEntries[i];
+    setStatus(true, t("stFetchingLocal", i + 1, fileEntries.length, ent.filename), Math.round(((i + 1) / fileEntries.length) * 20));
+    const resp = await fetch(`./api/local/file/${encodeURIComponent(ent.id)}`);
+    if (!resp.ok) continue;
+    const blob = await resp.blob();
+    out.push(new File([blob], ent.filename, { type: blob.type || "image/jpeg" }));
+  }
+  return out;
+}
+
+function renderPhotosAlbumList() {
+  const listEl = $("photosAlbumList");
+  if (!listEl) return;
+  const query = ($("txtAlbumFilter")?.value || "").trim().toLowerCase();
+  const filtered = state.photosAlbums.filter((a) => !query || a.name.toLowerCase().includes(query));
+  listEl.innerHTML = "";
+  if (!filtered.length) {
+    const empty = document.createElement("div");
+    empty.className = "muted-center";
+    empty.textContent = t("emptyAlbums");
+    listEl.appendChild(empty);
+    return;
+  }
+  for (const alb of filtered) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "album-item";
+    const nameSpan = document.createElement("span");
+    nameSpan.textContent = `📁 ${alb.name}`;
+    const countSpan = document.createElement("span");
+    countSpan.className = "album-count";
+    countSpan.textContent = typeof alb.count === "number" ? `${alb.count}` : "";
+    btn.appendChild(nameSpan);
+    btn.appendChild(countSpan);
+    btn.addEventListener("click", () => importPhotosAlbumLocal(alb.name));
+    listEl.appendChild(btn);
+  }
+}
+
+async function openPhotosAlbumModal() {
+  if (!state.localServer || !state.localMacos) return;
+  $("photosAlbumModal").classList.remove("hidden");
+  const listEl = $("photosAlbumList");
+  listEl.innerHTML = `<div class="muted-center">${t("stLoadingAlbums")}</div>`;
+  try {
+    const resp = await fetch("./api/photos/albums");
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    state.photosAlbums = Array.isArray(data.albums) ? data.albums : [];
+    renderPhotosAlbumList();
+  } catch (err) {
+    listEl.innerHTML = `<div class="muted-center">⚠️ ${err.message || err}</div>`;
+  }
+}
+
+async function importPhotosAlbumLocal(albumName) {
+  if (state.busy) return;
+  $("photosAlbumModal").classList.add("hidden");
+  stopPlay();
+  stopAuditionBgm();
+  setStatus(true, t("stExportingAlbum", albumName), 12);
+  try {
+    const resp = await fetch("./api/local/photos-export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ album_name: albumName }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    const files = await fetchLocalFilesAsFileObjects(data.files || []);
+    setStatus(false);
+    if (files.length) {
+      await ingestFiles(files, state.items.length > 0);
+    }
+  } catch (err) {
+    setStatus(false);
+    showToast(`❌ ${err.message || err}`, 4200);
+  }
+}
+
+async function initLocalDesktopBridge() {
+  try {
+    const resp = await fetch("./api/local/capabilities", { cache: "no-store" });
+    if (!resp.ok) return;
+    const caps = await resp.json();
+    if (!caps || !caps.local_server) return;
+    state.localServer = true;
+    state.localMacos = !!caps.macos;
+    if (state.localMacos) {
+      $("btnPhotosAlbum")?.classList.remove("hidden");
+      $("btnHeroPhotosAlbum")?.classList.remove("hidden");
+      document.querySelector(".desktop-tip")?.classList.add("hidden");
+    }
+    if (caps.startup_count > 0) {
+      const sResp = await fetch("./api/local/startup-files", { cache: "no-store" });
+      if (sResp.ok) {
+        const sData = await sResp.json();
+        if (Array.isArray(sData.files) && sData.files.length) {
+          const files = await fetchLocalFilesAsFileObjects(sData.files);
+          setStatus(false);
+          if (files.length) await ingestFiles(files, false);
+        }
+      }
+    }
+  } catch {
+    // Running as pure static web app (GitHub Pages / Cloudflare Pages) — ignore cleanly
+  }
+}
+
 // Register Offline-First PWA Service Worker
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
@@ -2766,3 +2893,4 @@ if ("serviceWorker" in navigator) {
 bindEvents();
 applyI18n();
 updateWorkspaceVisibility();
+initLocalDesktopBridge();

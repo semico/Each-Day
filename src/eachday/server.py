@@ -35,6 +35,8 @@ from eachday.photos_app import (
 from eachday.video import export_timelapse_video
 
 STATIC_DIR = Path(__file__).parent / "static"
+REPO_WEB_DIR = Path(__file__).resolve().parents[2] / "web"
+UI_DIR = REPO_WEB_DIR if (REPO_WEB_DIR / "index.html").exists() else STATIC_DIR
 
 
 class _ImageCache:
@@ -82,6 +84,24 @@ class ProjectSession:
             "last_export": None,
         }
         self._version = 0
+        self.local_files: dict[str, Path] = {}
+        self.startup_file_ids: list[str] = []
+        self.startup_folder: str | None = None
+
+    def register_local_files(self, files: list[Path]) -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
+        with self.lock:
+            for p in files:
+                fid = hashlib.md5(f"{p.resolve()}::{p.stat().st_mtime_ns}".encode("utf-8")).hexdigest()[:16]
+                self.local_files[fid] = p
+                entries.append({"id": fid, "filename": p.name, "size": p.stat().st_size})
+        return entries
+
+    def register_startup_files(self, files: list[Path], folder: Path) -> None:
+        entries = self.register_local_files(files)
+        with self.lock:
+            self.startup_folder = str(folder)
+            self.startup_file_ids = [e["id"] for e in entries]
 
     def set_status(
         self,
@@ -183,7 +203,11 @@ class ProjectSession:
 
 session = ProjectSession()
 
-app = FastAPI(title="EachDay - 健身打卡主体对齐视频工具")
+app = FastAPI(title="EachDay - 本地每日变化对齐工作室")
+if (UI_DIR / "js").exists():
+    app.mount("/js", StaticFiles(directory=str(UI_DIR / "js")), name="web_js")
+if (UI_DIR / "models").exists():
+    app.mount("/models", StaticFiles(directory=str(UI_DIR / "models")), name="web_models")
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -233,10 +257,99 @@ class ExportRequest(BaseModel):
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
-    index_file = STATIC_DIR / "index.html"
+    index_file = UI_DIR / "index.html"
     if not index_file.exists():
         return HTMLResponse("<h1>EachDay UI not found</h1>", status_code=500)
-    return HTMLResponse(index_file.read_text(encoding="utf-8"))
+    return HTMLResponse(
+        index_file.read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+@app.get("/styles.css")
+def serve_styles() -> FileResponse:
+    p = UI_DIR / "styles.css"
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="styles.css not found")
+    return FileResponse(p, media_type="text/css", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/manifest.webmanifest")
+def serve_manifest() -> FileResponse:
+    p = UI_DIR / "manifest.webmanifest"
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="manifest not found")
+    return FileResponse(p, media_type="application/manifest+json")
+
+
+@app.get("/sw.js")
+def serve_sw() -> FileResponse:
+    p = UI_DIR / "sw.js"
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="sw.js not found")
+    return FileResponse(p, media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/icon.svg")
+def serve_icon() -> FileResponse:
+    p = UI_DIR / "icon.svg"
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="icon.svg not found")
+    return FileResponse(p, media_type="image/svg+xml")
+
+
+@app.get("/api/local/capabilities")
+def api_local_capabilities() -> dict[str, Any]:
+    with session.lock:
+        return {
+            "local_server": True,
+            "macos": is_macos(),
+            "startup_folder": session.startup_folder,
+            "startup_count": len(session.startup_file_ids),
+        }
+
+
+@app.get("/api/local/startup-files")
+def api_local_startup_files() -> dict[str, Any]:
+    with session.lock:
+        files = []
+        for fid in session.startup_file_ids:
+            p = session.local_files.get(fid)
+            if p and p.exists():
+                files.append({"id": fid, "filename": p.name, "size": p.stat().st_size})
+        folder = session.startup_folder
+        # Consume startup queue once delivered so manual refresh starts clean
+        session.startup_file_ids = []
+        return {"folder": folder, "files": files}
+
+
+@app.post("/api/local/photos-export")
+def api_local_photos_export(req: AlbumImportRequest) -> dict[str, Any]:
+    album = req.album_name.strip()
+    if not album:
+        raise HTTPException(status_code=400, detail="请提供相簿名称。")
+    try:
+        out_dir = export_photos_album(album)
+        files = scan_folder(out_dir, recursive=True)
+        if not files:
+            raise HTTPException(status_code=400, detail=f"相簿「{album}」中未导出到可用照片。")
+        entries = session.register_local_files(files)
+        return {"album": album, "count": len(entries), "files": entries}
+    except HTTPException:
+        raise
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/local/file/{file_id}")
+def api_local_file(file_id: str) -> FileResponse:
+    with session.lock:
+        path = session.local_files.get(file_id)
+    if not path or not path.exists():
+        raise HTTPException(status_code=404, detail="找不到本地照片文件。")
+    return FileResponse(path, filename=path.name)
 
 
 @app.get("/api/state")
@@ -344,7 +457,7 @@ def api_import_photos_album(req: AlbumImportRequest) -> dict[str, Any]:
 def api_update_settings(patch: SettingsPatch) -> dict[str, Any]:
     with session.lock:
         s = session.settings
-        if patch.aspect_ratio in ("9:16", "3:4", "4:5", "1:1"):
+        if patch.aspect_ratio in ("9:16", "3:4", "4:5", "1:1", "4:3", "16:9"):
             s.aspect_ratio = patch.aspect_ratio  # type: ignore[assignment]
         if patch.resolution in ("720p", "1080p"):
             s.resolution = patch.resolution  # type: ignore[assignment]
