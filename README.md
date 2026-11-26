@@ -27,10 +27,12 @@ Documenting **gym progress, daily selfies ("Photo a Day"), baby growth, OOTD out
 
 ## Features
 
-- **3 Universal Alignment Modes**
-  - **🏋️ Body / Full-Body Mode** — Self-calibrating head/shoulder/torso alignment for gym progress, OOTD, pregnancy, and kids' height growth (automatically ignores background people).
+- **4 Universal Alignment Modes + 1-Click Subject Auto-Tracking**
+  - **🏋️ Body / Full-Body Mode** — Self-calibrating head/shoulder/torso alignment for gym progress, OOTD, pregnancy, and kids' height growth.
   - **🤳 Face / Eye-Line Mode** — Locks both eyes to the exact same horizontal line and scale across years of daily selfies, baby growth, skincare, braces, or haircut/beard changes.
-  - **🎯 2-Point Custom Object Mode** — Click any two reference points (`A → B`) to align pets, houseplants, desk setups, renovations, paintings, or coffee art with zero AI constraints.
+  - **🐾 Pets / Plants / 80+ Objects Mode (`YOLO11n`)** — Automatically detects 80 everyday subject categories (dogs, cats, birds, potted plants, cups, cars, laptops, furniture, etc.) **or draw a custom box around ANY subject** (LEGO, painting, sourdough jar, watch) in one photo and click **🎯 Auto-Track Across All Photos** to track and align it across every frame automatically!
+  - **🎯 2-Point Precision Mode** — Click any two reference points (`A → B`) for exact geometric alignment of rooms, renovations, or art.
+  - **Cross-Photo Subject Lock**: In Body, Face, or Object mode, click any subject in one photo and hit **Auto-Track Across All Photos** to lock onto that exact person/pet/object across the entire sequence.
 - **One-Click Automatic Face Privacy Mask & Stickers**  
   Auto-tracks faces across every frame to apply clean emoji stickers (`😎`, `🙂`, `🐱`, `🐻`, `🤖`, `✨`, `🏋️`), smooth blur, or pixelation to **your own face** and/or **background bystanders**—ready to share safely on social media.
 - **One-Click Auto Exposure & Color Consistency Match**  

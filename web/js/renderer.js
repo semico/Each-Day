@@ -33,6 +33,14 @@ export function getCanonicalTarget(cw, ch, settings) {
     };
   }
 
+  if (mode === "object") {
+    return {
+      targetX: cw * 0.5,
+      targetY: ch * (0.5 + settings.verticalShift),
+      targetSpanPx: Math.min(cw, ch) * 0.58 * settings.zoom,
+    };
+  }
+
   if (mode === "points") {
     return {
       targetX: cw * 0.5,
@@ -354,6 +362,19 @@ function drawAlignmentGuides(ctx, cw, ch, targetX, targetY, targetSpanPx, mode) 
       ctx.arc(ex, targetY, r, 0, Math.PI * 2);
       ctx.stroke();
     }
+  } else if (mode === "object") {
+    // Center crosshair + target subject framing box
+    ctx.beginPath();
+    ctx.moveTo(targetX, 0);
+    ctx.lineTo(targetX, ch);
+    ctx.moveTo(0, targetY);
+    ctx.lineTo(cw, targetY);
+    ctx.stroke();
+
+    const half = targetSpanPx * 0.5;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(targetX - half, targetY - half, targetSpanPx, targetSpanPx);
+    ctx.setLineDash([]);
   } else if (mode === "points") {
     // Centerline + Horizontal A <-> B Anchor Targets
     ctx.beginPath();

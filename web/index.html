@@ -69,9 +69,10 @@
           <section class="card">
             <h3 class="card-title" data-i18n="secAlignMode">对齐模式</h3>
             <div class="seg-group" id="alignModeGroup">
-              <button class="seg-btn active" data-val="body" data-i18n="segBody">全身/身材</button>
-              <button class="seg-btn" data-val="face" data-i18n="segFace">人脸/双眼</button>
-              <button class="seg-btn" data-val="points" data-i18n="segPoints">两点对齐</button>
+              <button class="seg-btn active" data-val="body" data-i18n="segBody">全身</button>
+              <button class="seg-btn" data-val="face" data-i18n="segFace">人脸</button>
+              <button class="seg-btn" data-val="object" data-i18n="segObject">物体/宠物</button>
+              <button class="seg-btn" data-val="points" data-i18n="segPoints">两点</button>
             </div>
           </section>
 
@@ -281,21 +282,26 @@
             </p>
 
             <!-- Scene / Mode Picker Cards -->
-            <div class="mode-cards" id="heroModeCards">
+            <div class="mode-cards mode-cards-4" id="heroModeCards">
               <button class="mode-card active" type="button" data-mode="body">
                 <span class="mode-emoji">🏋️</span>
                 <strong data-i18n="modeBody">全身 / 身材</strong>
-                <span class="mode-hint" data-i18n="modeBodyHint">健身 · OOTD · 孕期 · 身高</span>
+                <span class="mode-hint" data-i18n="modeBodyHint">健身 · OOTD · 孕期</span>
               </button>
               <button class="mode-card" type="button" data-mode="face">
                 <span class="mode-emoji">🤳</span>
                 <strong data-i18n="modeFace">人脸 / 双眼</strong>
-                <span class="mode-hint" data-i18n="modeFaceHint">每日自拍 · 宝宝 · 护肤 · 发型</span>
+                <span class="mode-hint" data-i18n="modeFaceHint">每日自拍 · 宝宝 · 护肤</span>
+              </button>
+              <button class="mode-card" type="button" data-mode="object">
+                <span class="mode-emoji">🐾</span>
+                <strong data-i18n="modeObject">宠物 / 植物 / 物体</strong>
+                <span class="mode-hint" data-i18n="modeObjectHint">80+物体识别 · 框选自动追踪</span>
               </button>
               <button class="mode-card" type="button" data-mode="points">
                 <span class="mode-emoji">🎯</span>
-                <strong data-i18n="modePoints">任意物体</strong>
-                <span class="mode-hint" data-i18n="modePointsHint">宠物 · 植物 · 装修 · 两点对齐</span>
+                <strong data-i18n="modePoints">两点精确对齐</strong>
+                <span class="mode-hint" data-i18n="modePointsHint">装修 · 手作 · 任意参照点</span>
               </button>
             </div>
 
@@ -402,7 +408,16 @@
             <div class="source-picker-wrap" id="sourcePickerWrap">
               <img id="sourceImg" alt="Source Photo" draggable="false" />
               <div id="candidateOverlay" class="candidate-overlay"></div>
+              <div id="drawBoxMarquee" class="draw-marquee hidden"></div>
               <svg id="pointsOverlay" class="points-overlay hidden" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
+            </div>
+            <div id="trackActions" class="track-actions mt-8 hidden">
+              <button class="btn btn-primary btn-xs track-all-btn" id="btnTrackAll" type="button" data-i18n="btnTrackAll">
+                🎯 全组自动追踪此主体
+              </button>
+              <button class="btn btn-secondary btn-xs hidden" id="btnDrawBox" type="button" data-i18n="btnDrawBoxOff">
+                ✏️ 框选自定义目标
+              </button>
             </div>
             <div id="pointsActions" class="points-actions hidden">
               <button class="btn btn-secondary btn-xs" id="btnCopyPrevPts" type="button" data-i18n="btnCopyPrevPts">复制上一张点位</button>

@@ -3,10 +3,14 @@
 import { TRANSLATIONS, detectInitialLang } from "./i18n.js";
 import { decodeImageFile, extractCaptureDate, isSupportedFile } from "./images.js";
 import { detectPeopleInCanvas, ensurePoseModel } from "./pose.js";
+import { detectObjectsInCanvas, ensureObjectModel, formatObjectLabel } from "./objects.js";
 import {
   computeCandidateTransform,
   finalizeBatchAlignment,
+  finalizeBatchObjects,
   recomputeBatchTransforms,
+  trackSelectedObjectAcrossBatch,
+  trackSelectedPersonAcrossBatch,
 } from "./aligner.js";
 import { computeBatchColorTarget, computePhotoColorStats } from "./color.js";
 import { getCanvasSize, renderAlignedToCanvas, renderComparisonCanvas } from "./renderer.js";
@@ -72,6 +76,7 @@ const state = {
   selectedIndex: 0,
   showGuides: true,
   showOnion: false,
+  drawBoxMode: false,
   playing: false,
   playTimer: null,
   lastExportUrl: null,
@@ -371,11 +376,22 @@ function renderFilmstrip() {
       card.appendChild(star);
     }
 
-    const showWarn = state.settings.alignMode !== "points" ? !!item.warning : item.customPoints.length < 2;
+    const mode = state.settings.alignMode;
+    const showWarn =
+      mode === "points"
+        ? item.customPoints.length < 2
+        : mode === "object"
+        ? !!item.objectWarning
+        : !!item.warning;
     if (showWarn) {
       const warn = document.createElement("div");
       warn.className = "thumb-warn";
-      warn.title = state.settings.alignMode === "points" ? t("pointsStatus", item.customPoints.length) : item.warning;
+      warn.title =
+        mode === "points"
+          ? t("pointsStatus", item.customPoints.length)
+          : mode === "object"
+          ? item.objectWarning
+          : item.warning;
       warn.textContent = "!";
       card.appendChild(warn);
     }
@@ -487,10 +503,14 @@ function renderInspector() {
   crBtn.classList.toggle("active", isColorRef);
   crBtn.textContent = isColorRef ? t("btnColorRefOn") : t("btnColorRefOff");
 
-  const isPointsMode = state.settings.alignMode === "points";
+  const mode = state.settings.alignMode;
+  const isPointsMode = mode === "points";
+  const isObjectMode = mode === "object";
+
+  const activeWarning = isPointsMode ? null : isObjectMode ? item.objectWarning : item.warning;
   const warnBox = $("insWarning");
-  if (!isPointsMode && item.warning) {
-    warnBox.textContent = `⚠️ ${item.warning}`;
+  if (activeWarning) {
+    warnBox.textContent = `⚠️ ${activeWarning}`;
     warnBox.classList.remove("hidden");
   } else {
     warnBox.classList.add("hidden");
@@ -501,24 +521,79 @@ function renderInspector() {
   const candOverlay = $("candidateOverlay");
   const ptsOverlay = $("pointsOverlay");
   const ptsActions = $("pointsActions");
+  const trackActions = $("trackActions");
+  const btnDrawBox = $("btnDrawBox");
+  const btnTrackAll = $("btnTrackAll");
+
+  wrap.classList.toggle("points-mode", isPointsMode);
+  wrap.classList.toggle("draw-mode", isObjectMode && state.drawBoxMode);
 
   if (isPointsMode) {
-    wrap.classList.add("points-mode");
     $("insPickerTitle").textContent = t("secPoints");
     $("insPickerHint").textContent = t("pointsHint");
     $("insCandCount").textContent = t("pointsStatus", item.customPoints.length);
     candOverlay.classList.add("hidden");
     ptsOverlay.classList.remove("hidden");
     ptsActions.classList.remove("hidden");
+    trackActions.classList.add("hidden");
     renderPointsSvg(item);
+  } else if (isObjectMode) {
+    const objList = item.objectCandidates || [];
+    $("insPickerTitle").textContent = t("secObjectPicker");
+    $("insPickerHint").textContent = t("objectHint");
+    $("insCandCount").textContent = `${objList.length} ${t("unitObjects")}`;
+    candOverlay.classList.remove("hidden");
+    ptsOverlay.classList.add("hidden");
+    ptsActions.classList.add("hidden");
+    trackActions.classList.remove("hidden");
+    btnDrawBox.classList.remove("hidden");
+    btnDrawBox.classList.toggle("active", state.drawBoxMode);
+    btnDrawBox.textContent = state.drawBoxMode ? t("btnDrawBoxOn") : t("btnDrawBoxOff");
+    btnTrackAll.disabled = state.busy || objList.length === 0 || state.items.length < 2;
+
+    candOverlay.innerHTML = "";
+    objList.forEach((cand) => {
+      const [x1, y1, x2, y2] = cand.bbox;
+      const box = document.createElement("div");
+      box.className = "cand-box" + (cand.index === item.selectedObject ? " selected" : "");
+      box.style.left = `${(x1 / item.width) * 100}%`;
+      box.style.top = `${(y1 / item.height) * 100}%`;
+      box.style.width = `${((x2 - x1) / item.width) * 100}%`;
+      box.style.height = `${((y2 - y1) / item.height) * 100}%`;
+
+      const tag = document.createElement("div");
+      tag.className = "cand-tag";
+      const lbl = formatObjectLabel(cand, state.lang);
+      tag.textContent = cand.index === item.selectedObject ? `✓ ${lbl}` : lbl;
+      box.appendChild(tag);
+
+      box.addEventListener("click", (e) => {
+        if (state.drawBoxMode) return;
+        e.stopPropagation();
+        item.selectedObject = cand.index;
+        item.transform = computeCandidateTransform(item, null, state.proportions, "object");
+        item.transform.userDx = 0;
+        item.transform.userDy = 0;
+        item.transform.userScale = 1;
+        item.transform.userAngleDeg = 0;
+        renderMainCanvas();
+        renderInspector();
+        refreshCurrentThumb();
+      });
+      candOverlay.appendChild(box);
+    });
   } else {
-    wrap.classList.remove("points-mode");
     $("insPickerTitle").textContent = t("secSubject");
     $("insPickerHint").textContent = t("subjectHint");
     $("insCandCount").textContent = `${item.candidates.length} ${t("unitPeople")}`;
     candOverlay.classList.remove("hidden");
     ptsOverlay.classList.add("hidden");
     ptsActions.classList.add("hidden");
+    btnDrawBox.classList.add("hidden");
+    // Show "Auto-Track Across All" button whenever there are multiple photos & a person is detected
+    const showTrackBtn = state.items.length >= 2 && item.candidates.length > 0;
+    trackActions.classList.toggle("hidden", !showTrackBtn);
+    btnTrackAll.disabled = state.busy || !showTrackBtn;
 
     candOverlay.innerHTML = "";
     item.candidates.forEach((cand) => {
@@ -586,6 +661,18 @@ function updateWorkspaceVisibility() {
   $("filmstripBar").classList.toggle("hidden", !has);
   $("btnExport").disabled = enabledCount === 0 || state.busy;
   $("btnCompare").disabled = enabledCount < 2 || state.busy;
+
+  const item = currentItem();
+  const mode = state.settings.alignMode;
+  const hasTrackTarget =
+    !!item &&
+    state.items.length >= 2 &&
+    (mode === "object"
+      ? (item.objectCandidates?.length || 0) > 0
+      : (mode === "body" || mode === "face") && (item.candidates?.length || 0) > 0);
+  if ($("btnTrackAll")) {
+    $("btnTrackAll").disabled = state.busy || !hasTrackTarget;
+  }
 }
 
 // Project Save & Resume (.eachday.json)
@@ -735,6 +822,34 @@ async function handleLoadProjectFile(file) {
   }
 }
 
+async function runObjectDetectionOnItems(targetItems) {
+  const unanalyzed = targetItems.filter((it) => !it.objectAnalyzed);
+  if (!unanalyzed.length) return;
+
+  setStatus(true, t("stLoadingObjModel"), 30);
+  await ensureObjectModel();
+
+  for (let i = 0; i < unanalyzed.length; i++) {
+    const item = unanalyzed[i];
+    setStatus(
+      true,
+      t("stDetectingObjects", i + 1, unanalyzed.length, item.filename),
+      35 + Math.round(((i + 1) / unanalyzed.length) * 58)
+    );
+    try {
+      const objs = await detectObjectsInCanvas(item.canvas);
+      item.objectCandidates = objs;
+      item.selectedObject = 0;
+      item.objectAnalyzed = true;
+      item.objectWarning = objs.length ? null : t("warnNoObject");
+    } catch (err) {
+      console.error("Object detect error:", item.filename, err);
+      item.objectWarning = String(err.message || err);
+    }
+    await new Promise((r) => setTimeout(r, 0));
+  }
+}
+
 async function runPoseDetectionOnItems(targetItems) {
   const unanalyzed = targetItems.filter((it) => !it.poseAnalyzed);
   if (!unanalyzed.length) return;
@@ -802,8 +917,12 @@ async function ingestFiles(fileList, append = false) {
           milestone: false,
           detected: false,
           poseAnalyzed: false,
+          objectAnalyzed: false,
           selectedCandidate: 0,
           candidates: [],
+          selectedObject: 0,
+          objectCandidates: [],
+          objectWarning: null,
           customPoints: [],
           transform: {
             srcCx: width * 0.5,
@@ -846,6 +965,23 @@ async function ingestFiles(fileList, append = false) {
         renderInspector();
         showToast(t("stPointsReady", state.items.length), 3600);
       }
+    } else if (state.settings.alignMode === "object") {
+      await runObjectDetectionOnItems(merged);
+      finalizeBatchObjects(merged);
+      state.items = merged;
+      state.selectedIndex = 0;
+      refreshBatchColorTarget();
+      if (state.pendingProject) {
+        const proj = state.pendingProject;
+        state.pendingProject = null;
+        applyProjectConfigToLoadedItems(proj);
+      } else {
+        updateWorkspaceVisibility();
+        renderFilmstrip();
+        renderMainCanvas();
+        renderInspector();
+        showToast(t("stDone", state.items.length), 3200);
+      }
     } else {
       await runPoseDetectionOnItems(merged);
       setStatus(true, t("stIdentity"), 96);
@@ -878,13 +1014,27 @@ async function ingestFiles(fileList, append = false) {
 async function switchAlignMode(nextMode) {
   if (state.settings.alignMode === nextMode) return;
   stopPlay();
+  state.drawBoxMode = false;
   state.settings.alignMode = nextMode;
   persistSettings(state.settings);
   syncSettingsUI();
 
   if (!state.items.length) return;
 
-  if (nextMode !== "points" && state.items.some((it) => !it.poseAnalyzed)) {
+  if (nextMode === "object" && state.items.some((it) => !it.objectAnalyzed)) {
+    state.busy = true;
+    updateWorkspaceVisibility();
+    try {
+      await runObjectDetectionOnItems(state.items);
+      finalizeBatchObjects(state.items);
+    } catch (err) {
+      showToast(`❌ ${err.message || err}`, 4000);
+    } finally {
+      state.busy = false;
+      setStatus(false);
+      updateWorkspaceVisibility();
+    }
+  } else if ((nextMode === "body" || nextMode === "face") && state.items.some((it) => !it.poseAnalyzed)) {
     state.busy = true;
     updateWorkspaceVisibility();
     try {
@@ -904,6 +1054,41 @@ async function switchAlignMode(nextMode) {
   renderFilmstrip();
   renderMainCanvas();
   renderInspector();
+}
+
+async function handleAutoTrackSubject() {
+  if (state.busy || state.items.length < 2) return;
+  const mode = state.settings.alignMode;
+  const refIdx = state.selectedIndex;
+  stopPlay();
+  state.drawBoxMode = false;
+
+  if (mode === "body" || mode === "face") {
+    state.proportions = trackSelectedPersonAcrossBatch(state.items, refIdx, mode);
+    renderFilmstrip();
+    renderMainCanvas();
+    renderInspector();
+    showToast(t("stTrackedDone", state.items.length), 3200);
+  } else if (mode === "object") {
+    state.busy = true;
+    updateWorkspaceVisibility();
+    try {
+      await trackSelectedObjectAcrossBatch(state.items, refIdx, (cur, tot, name) => {
+        setStatus(true, t("stTrackingSubject", cur, tot, name), Math.round((cur / tot) * 96));
+      });
+      renderFilmstrip();
+      renderMainCanvas();
+      renderInspector();
+      showToast(t("stTrackedDone", state.items.length), 3200);
+    } catch (err) {
+      console.error(err);
+      showToast(`❌ ${err.message || err}`, 4000);
+    } finally {
+      state.busy = false;
+      setStatus(false);
+      updateWorkspaceVisibility();
+    }
+  }
 }
 
 function sortItemsList(list, mode) {
@@ -1165,7 +1350,90 @@ function bindPreviewInteractions() {
     { passive: false }
   );
 
-  $("sourcePickerWrap").addEventListener("click", (e) => {
+  // Interactive custom box drag-drawing in Object Mode
+  const pickerWrap = $("sourcePickerWrap");
+  const marquee = $("drawBoxMarquee");
+  let drawingBox = false;
+  let drawStartX = 0;
+  let drawStartY = 0;
+
+  pickerWrap.addEventListener("mousedown", (e) => {
+    if (state.settings.alignMode !== "object" || !state.drawBoxMode) return;
+    const item = currentItem();
+    if (!item) return;
+    const rect = $("sourceImg").getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    e.preventDefault();
+    drawingBox = true;
+    drawStartX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+    drawStartY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+    marquee.style.left = `${(drawStartX / rect.width) * 100}%`;
+    marquee.style.top = `${(drawStartY / rect.height) * 100}%`;
+    marquee.style.width = "0%";
+    marquee.style.height = "0%";
+    marquee.classList.remove("hidden");
+  });
+
+  window.addEventListener("mousemove", (e) => {
+    if (!drawingBox) return;
+    const rect = $("sourceImg").getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const curX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+    const curY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+    const x1 = Math.min(drawStartX, curX);
+    const y1 = Math.min(drawStartY, curY);
+    const w = Math.abs(curX - drawStartX);
+    const h = Math.abs(curY - drawStartY);
+    marquee.style.left = `${(x1 / rect.width) * 100}%`;
+    marquee.style.top = `${(y1 / rect.height) * 100}%`;
+    marquee.style.width = `${(w / rect.width) * 100}%`;
+    marquee.style.height = `${(h / rect.height) * 100}%`;
+  });
+
+  window.addEventListener("mouseup", (e) => {
+    if (!drawingBox) return;
+    drawingBox = false;
+    marquee.classList.add("hidden");
+    const item = currentItem();
+    if (!item) return;
+    const rect = $("sourceImg").getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const curX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+    const curY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+    const x1 = (Math.min(drawStartX, curX) / rect.width) * item.width;
+    const y1 = (Math.min(drawStartY, curY) / rect.height) * item.height;
+    const x2 = (Math.max(drawStartX, curX) / rect.width) * item.width;
+    const y2 = (Math.max(drawStartY, curY) / rect.height) * item.height;
+    if (x2 - x1 < 12 || y2 - y1 < 12) return;
+
+    if (!item.objectCandidates) item.objectCandidates = [];
+    // Replace any existing custom box on this photo
+    item.objectCandidates = item.objectCandidates.filter((c) => !c.isCustom);
+    item.objectCandidates.forEach((c, idx) => { c.index = idx; });
+    const customCand = {
+      index: item.objectCandidates.length,
+      classId: -1,
+      label: "custom",
+      detConf: 1.0,
+      score: 1.0,
+      bbox: [x1, y1, x2, y2],
+      isCustom: true,
+    };
+    item.objectCandidates.push(customCand);
+    item.selectedObject = customCand.index;
+    item.objectWarning = null;
+    state.drawBoxMode = false;
+    item.transform = computeCandidateTransform(item, null, state.proportions, "object");
+    item.transform.userDx = 0;
+    item.transform.userDy = 0;
+    item.transform.userScale = 1;
+    item.transform.userAngleDeg = 0;
+    renderInspector();
+    renderMainCanvas();
+    refreshCurrentThumb();
+  });
+
+  pickerWrap.addEventListener("click", (e) => {
     if (state.settings.alignMode !== "points") return;
     const item = currentItem();
     if (!item) return;
@@ -1395,6 +1663,13 @@ function bindEvents() {
   });
   $("btnPrev").addEventListener("click", () => { stopPlay(); selectIndex(state.selectedIndex - 1); });
   $("btnNext").addEventListener("click", () => { stopPlay(); selectIndex(state.selectedIndex + 1); });
+
+  // Auto-Track & Custom Box buttons
+  $("btnTrackAll").addEventListener("click", handleAutoTrackSubject);
+  $("btnDrawBox").addEventListener("click", () => {
+    state.drawBoxMode = !state.drawBoxMode;
+    renderInspector();
+  });
 
   // 2-point helper buttons
   $("btnCopyPrevPts").addEventListener("click", () => {

@@ -1,8 +1,11 @@
+import { cosineSimilarity, extractBoxDescriptor, trackTemplateInCanvas } from "./objects.js";
+
 /**
  * Self-calibrating multi-mode alignment engine (100% in-browser):
  *   - "body":   Full/upper body alignment (gym progress, OOTD, pregnancy, standing growth)
  *   - "face":   Eye-line & facial feature alignment (daily selfie, baby growth, skincare, hair/beard)
- *   - "points": Universal 2-point anchor alignment (pets, plants, renovations, art, any object)
+ *   - "object": 80-class COCO object + custom-box visual auto-tracking (pets, plants, cups, cars, anything)
+ *   - "points": Universal 2-point anchor alignment (precision A -> B geometry)
  */
 
 function median(arr) {
@@ -519,9 +522,51 @@ export function getReferencePointsAngle(items) {
   return null;
 }
 
+/**
+ * Mode 4: Object / Pet / Plant / Custom-Box alignment.
+ * Centers the selected object bounding box and scales smoothly by its geometric mean dimension.
+ */
+export function computeObjectTransform(item, objCandidate) {
+  const prev = item.transform || {};
+  if (!objCandidate || !objCandidate.bbox) {
+    return {
+      srcCx: item.width * 0.5,
+      srcCy: item.height * 0.5,
+      scale: 1 / Math.max(40, Math.min(item.width, item.height) * 0.55),
+      angleDeg: 0,
+      userDx: prev.userDx || 0,
+      userDy: prev.userDy || 0,
+      userScale: prev.userScale || 1,
+      userAngleDeg: prev.userAngleDeg || 0,
+    };
+  }
+  const [x1, y1, x2, y2] = objCandidate.bbox;
+  const bw = Math.max(14, x2 - x1);
+  const bh = Math.max(14, y2 - y1);
+  const size = Math.sqrt(bw * bh);
+
+  return {
+    srcCx: (x1 + x2) * 0.5,
+    srcCy: (y1 + y2) * 0.5,
+    scale: 1 / Math.max(18, size),
+    angleDeg: 0,
+    userDx: prev.userDx || 0,
+    userDy: prev.userDy || 0,
+    userScale: prev.userScale || 1,
+    userAngleDeg: prev.userAngleDeg || 0,
+  };
+}
+
 export function computeCandidateTransform(item, candidate, proportions, alignMode = "body", referenceAngleDeg = null) {
   if (alignMode === "points") {
     return computePointsTransform(item, referenceAngleDeg);
+  }
+  if (alignMode === "object") {
+    const objCand =
+      item.objectCandidates && item.selectedObject < item.objectCandidates.length
+        ? item.objectCandidates[item.selectedObject]
+        : null;
+    return computeObjectTransform(item, objCand);
   }
   if (!candidate) {
     const prev = item.transform || {};
@@ -543,8 +588,8 @@ export function computeCandidateTransform(item, candidate, proportions, alignMod
 }
 
 /**
- * Recompute transforms for an entire batch when switching alignment mode (body / face / points)
- * without re-running pose inference.
+ * Recompute transforms for an entire batch when switching alignment mode (body / face / object / points)
+ * without re-running model inference.
  */
 export function recomputeBatchTransforms(items, proportions, alignMode = "body") {
   const refPtsAngle = alignMode === "points" ? getReferencePointsAngle(items) : null;
@@ -555,6 +600,211 @@ export function recomputeBatchTransforms(items, proportions, alignMode = "body")
         : null;
     item.transform = computeCandidateTransform(item, cand, proportions, alignMode, refPtsAngle);
   }
+}
+
+/**
+ * Auto-Track a specific chosen person (from `refItemIndex`) across EVERY photo in the batch.
+ * Uses head + full-body visual descriptors heavily so even a smaller/off-center person (e.g., child or friend)
+ * stays locked across the entire sequence.
+ */
+export function trackSelectedPersonAcrossBatch(items, refItemIndex, alignMode = "body") {
+  const refItem = items[refItemIndex];
+  if (!refItem || !refItem.candidates.length) return calibrateBodyProportions(items);
+  const refCand = refItem.candidates[refItem.selectedCandidate];
+  if (!refCand) return calibrateBodyProportions(items);
+
+  const refHead = extractHeadDescriptor(refItem.canvas, refCand);
+  const refBody = extractBoxDescriptor(refItem.canvas, refCand.bbox);
+
+  for (let i = 0; i < items.length; i++) {
+    if (i === refItemIndex) continue;
+    const item = items[i];
+    if (!item.candidates || item.candidates.length <= 1) continue;
+
+    let bestIdx = 0;
+    let bestScore = -1e9;
+    for (let c = 0; c < item.candidates.length; c++) {
+      const cand = item.candidates[c];
+      const hDesc = extractHeadDescriptor(item.canvas, cand);
+      const bDesc = extractBoxDescriptor(item.canvas, cand.bbox);
+
+      let sim = 0;
+      let wSum = 0;
+      if (refHead && hDesc) {
+        sim += Math.max(0, cosineSimilarity(refHead, hDesc)) * 0.65;
+        wSum += 0.65;
+      }
+      if (refBody && bDesc) {
+        sim += Math.max(0, cosineSimilarity(refBody, bDesc)) * 0.35;
+        wSum += 0.35;
+      }
+      const idSim = wSum > 0 ? sim / wSum : 0;
+      const combined = idSim * 0.78 + cand.score * 0.22;
+      if (combined > bestScore) {
+        bestScore = combined;
+        bestIdx = c;
+      }
+    }
+    item.selectedCandidate = bestIdx;
+    item.transform.userDx = 0;
+    item.transform.userDy = 0;
+    item.transform.userScale = 1;
+    item.transform.userAngleDeg = 0;
+  }
+
+  const proportions = calibrateBodyProportions(items);
+  recomputeBatchTransforms(items, proportions, alignMode);
+  return proportions;
+}
+
+/**
+ * Initial smart selection across a batch in Object Mode: picks the most consistently recurring
+ * prominent object class (e.g. potted plant, dog, cat, cup) and locks onto the best matching instance.
+ */
+export function finalizeBatchObjects(items) {
+  const classStats = new Map();
+  for (const item of items) {
+    const seenInPhoto = new Set();
+    for (const c of item.objectCandidates || []) {
+      if (seenInPhoto.has(c.label)) continue;
+      seenInPhoto.add(c.label);
+      const prev = classStats.get(c.label) || { count: 0, scoreSum: 0 };
+      prev.count += 1;
+      prev.scoreSum += c.score;
+      classStats.set(c.label, prev);
+    }
+  }
+
+  // Prefer the most frequently recurring prominent object class across the batch
+  let bestLabel = null;
+  let bestRank = -1;
+  for (const [label, st] of classStats.entries()) {
+    // Slight preference for non-person subjects in Object Mode when tied (since Body/Face handle people)
+    const nonPersonBonus = label === "person" ? 0.92 : 1.08;
+    const rank = (st.count * 1.4 + st.scoreSum) * nonPersonBonus;
+    if (rank > bestRank) {
+      bestRank = rank;
+      bestLabel = label;
+    }
+  }
+
+  if (bestLabel) {
+    // Find clearest exemplar of bestLabel to match instance appearance across photos
+    let exemplar = null;
+    let bestExScore = -1;
+    for (const item of items) {
+      for (const c of item.objectCandidates || []) {
+        if (c.label === bestLabel && c.score > bestExScore) {
+          bestExScore = c.score;
+          exemplar = { item, cand: c };
+        }
+      }
+    }
+    const refDesc = exemplar ? extractBoxDescriptor(exemplar.item.canvas, exemplar.cand.bbox) : null;
+
+    for (const item of items) {
+      const list = item.objectCandidates || [];
+      if (!list.length) {
+        item.selectedObject = 0;
+        continue;
+      }
+      const matching = list.filter((c) => c.label === bestLabel);
+      if (matching.length) {
+        let pick = matching[0];
+        if (matching.length > 1 && refDesc) {
+          let bestS = -1e9;
+          for (const m of matching) {
+            const d = extractBoxDescriptor(item.canvas, m.bbox);
+            const comb = Math.max(0, cosineSimilarity(refDesc, d)) * 0.65 + m.score * 0.35;
+            if (comb > bestS) {
+              bestS = comb;
+              pick = m;
+            }
+          }
+        }
+        item.selectedObject = pick.index;
+      } else {
+        item.selectedObject = 0;
+      }
+    }
+  }
+
+  recomputeBatchTransforms(items, {}, "object");
+}
+
+/**
+ * Auto-Track ANY user-selected object box (auto-detected COCO class OR custom drawn rectangle!)
+ * from `refItemIndex` across ALL other photos in the batch.
+ */
+export async function trackSelectedObjectAcrossBatch(items, refItemIndex, onProgress) {
+  const refItem = items[refItemIndex];
+  if (!refItem || !refItem.objectCandidates || !refItem.objectCandidates.length) return;
+  const refCand = refItem.objectCandidates[refItem.selectedObject];
+  if (!refCand) return;
+
+  const refDesc = extractBoxDescriptor(refItem.canvas, refCand.bbox);
+  const isCustom = !!refCand.isCustom;
+  const targetLabel = refCand.label;
+
+  for (let i = 0; i < items.length; i++) {
+    if (i === refItemIndex) continue;
+    const item = items[i];
+    if (onProgress) onProgress(i + 1, items.length, item.filename);
+
+    if (!item.objectCandidates) item.objectCandidates = [];
+    // Remove previous auto-tracked custom box before adding a fresh one
+    item.objectCandidates = item.objectCandidates.filter((c) => !c.isTrackedFallback);
+    item.objectCandidates.forEach((c, idx) => {
+      c.index = idx;
+    });
+
+    let matchedIdx = -1;
+
+    // 1. If tracking a COCO class, prefer matching same-class detections by visual appearance
+    if (!isCustom) {
+      const sameClass = item.objectCandidates.filter((c) => !c.isCustom && c.label === targetLabel);
+      if (sameClass.length) {
+        let bestS = -1e9;
+        for (const c of sameClass) {
+          const d = extractBoxDescriptor(item.canvas, c.bbox);
+          const sim = refDesc && d ? Math.max(0, cosineSimilarity(refDesc, d)) : 0;
+          const comb = sim * 0.72 + c.score * 0.28;
+          if (comb > bestS) {
+            bestS = comb;
+            matchedIdx = c.index;
+          }
+        }
+      }
+    }
+
+    // 2. If custom-drawn box OR target class wasn't detected in this photo -> visual template tracking!
+    if (matchedIdx < 0) {
+      const tracked = trackTemplateInCanvas(item.canvas, refItem.canvas, refCand.bbox);
+      const trackedCand = {
+        index: item.objectCandidates.length,
+        classId: refCand.classId ?? -1,
+        label: isCustom ? "custom" : targetLabel,
+        detConf: Math.max(0.2, Math.min(0.99, (tracked.similarity + 1) * 0.5)),
+        score: tracked.similarity,
+        bbox: tracked.bbox,
+        isCustom: isCustom,
+        isTrackedFallback: true,
+      };
+      item.objectCandidates.push(trackedCand);
+      matchedIdx = trackedCand.index;
+    }
+
+    item.selectedObject = matchedIdx;
+    item.objectWarning = null;
+    item.transform.userDx = 0;
+    item.transform.userDy = 0;
+    item.transform.userScale = 1;
+    item.transform.userAngleDeg = 0;
+    // Yield to browser UI
+    await new Promise((r) => setTimeout(r, 0));
+  }
+
+  recomputeBatchTransforms(items, {}, "object");
 }
 
 /**
