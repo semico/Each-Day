@@ -5,8 +5,8 @@
 **自动对齐每次健身打卡照片中的人物主体，一键生成流畅的高清成长延时视频。**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![在线直接使用：100% 本地零上传](https://img.shields.io/badge/%E5%9C%A8%E7%BA%BF%E7%BD%91%E9%A1%B5%E7%89%88-100%25%20%E6%9C%AC%E5%9C%B0%E8%BF%90%E8%A1%8C%20%C2%B7%20%E7%85%A7%E7%89%87%E4%B8%8D%E4%B8%8A%E4%BC%A0-10b981.svg)](https://semico.github.io/Match-Still/)
 [![Python 3.10–3.12](https://img.shields.io/badge/Python-3.10%E2%80%933.12-3776AB.svg)](https://www.python.org/)
-[![Platform: macOS / Cross-platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#安装)
 
 [English](README.md) | 简体中文
 
@@ -14,7 +14,16 @@
 
 ---
 
+> ### 🌐 打开网页直接用 — 100% 本地运行 · 照片绝不上传
+> **[立即打开 Match-Still 网页工作台 →](https://semico.github.io/Match-Still/)**
+>
+> **零上传 · 无后端服务器。** AI 姿态识别（浏览器本地运行 `YOLO11-Pose ONNX`）、人物锁定、图像对齐与 MP4 视频编码全部在你的本机浏览器内完成，照片永远不会离开你的设备（加载完页面后甚至可以断网使用）。
+
 每次练完都会对镜自拍打卡？**EachDay** 自动识别并对齐每张照片中的「你」，智能过滤健身房背景里的路人，把远近不一、角度微偏的照片稳稳对齐到同一位置与比例，并导出流畅的 H.264 MP4 延时视频——全程 **100% 本地运行**，保护个人隐私。
+
+<p align="center">
+  <img src="docs/demo.gif" alt="EachDay 健身打卡主体对齐工作台效果演示" width="640" />
+</p>
 
 ## 核心特性
 

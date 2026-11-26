@@ -5,8 +5,8 @@
 **Automatically align yourself across daily gym progress photos and turn them into smooth timelapse videos.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Try Online: 100% Local](https://img.shields.io/badge/Live%20Web%20App-100%25%20Local%20%2F%20Zero%20Upload-10b981.svg)](https://semico.github.io/Match-Still/)
 [![Python 3.10–3.12](https://img.shields.io/badge/Python-3.10%E2%80%933.12-3776AB.svg)](https://www.python.org/)
-[![Platform: macOS / Cross-platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#installation)
 
 English | [简体中文](README.zh-CN.md)
 
@@ -14,13 +14,16 @@ English | [简体中文](README.zh-CN.md)
 
 ---
 
+> ### 🌐 Try It Instantly in Your Browser — 100% Local & Private
+> **[Open Match-Still Web Studio →](https://semico.github.io/Match-Still/)**
+>
+> **Zero uploads. Zero backend.** AI pose detection (`YOLO11-Pose` via ONNX Runtime Web), subject locking, alignment, and MP4 encoding all run **100% locally inside your browser**. Your photos never leave your device—you can even disconnect Wi-Fi after loading the page.
+
 Take a mirror selfie after every workout? **EachDay** detects your body pose across all your photos, filters out random gym-goers in the background, aligns your head, shoulders, and torso to the exact same scale and position, and exports a crisp H.264 MP4 timelapse—all running **100% locally** on your machine.
 
-<!-- Tip: Drop a demo GIF or video here once you export one!
 <p align="center">
-  <img src="docs/demo.gif" alt="EachDay aligned timelapse demo" width="320" />
+  <img src="docs/demo.gif" alt="EachDay aligned gym progress timelapse studio demo" width="640" />
 </p>
--->
 
 ## Features
 

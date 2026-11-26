@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EachDay · 100% 本地健身打卡主体对齐工具（照片不上传）</title>
+  <meta name="description" content="100% in-browser local gym progress photo alignment and timelapse MP4 generator. Your photos never leave your device." />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Top Header -->
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">ED</div>
+        <div>
+          <div class="brand-title-row">
+            <span class="brand-title">EachDay</span>
+            <button class="privacy-pill" id="btnPrivacyInfo" type="button">
+              <span class="pulse-dot"></span>
+              <span data-i18n="privacyPill">100% 本地运行 · 照片绝不上传</span>
+            </button>
+          </div>
+          <div class="brand-sub" data-i18n="brandSub">100% 浏览器本地运行 · 健身打卡主体自动对齐</div>
+        </div>
+      </div>
+
+      <div class="topbar-actions">
+        <label class="btn btn-secondary" for="folderInput">
+          <span>📂</span> <span data-i18n="btnSelectFolder">选择文件夹</span>
+        </label>
+        <label class="btn btn-secondary" for="fileInput">
+          <span>🖼️</span> <span data-i18n="btnSelectPhotos">选择多张照片</span>
+        </label>
+        <button class="btn btn-primary" id="btnExport" disabled>
+          <span>🎬</span> <span data-i18n="btnExport">导出 MP4 视频</span>
+        </button>
+        <button class="btn btn-ghost lang-btn" id="btnLang" title="Switch Language">EN</button>
+        <a class="btn btn-ghost github-btn" href="https://github.com/semico/Match-Still" target="_blank" rel="noopener" title="GitHub">
+          GitHub ↗
+        </a>
+      </div>
+    </header>
+
+    <!-- Hidden File Inputs (multi-file & whole-folder) -->
+    <input type="file" id="fileInput" multiple accept="image/*,.heic,.heif" hidden />
+    <input type="file" id="folderInput" webkitdirectory directory multiple hidden />
+
+    <!-- Progress Banner -->
+    <div class="status-bar hidden" id="statusBar">
+      <div class="status-info">
+        <span class="spinner"></span>
+        <span id="statusText">处理中...</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="statusProgress"></div>
+      </div>
+    </div>
+
+    <!-- Main 3-Column Studio -->
+    <main class="studio">
+      <!-- Left Panel: Global Settings -->
+      <aside class="panel panel-left">
+        <div class="panel-scroll">
+          <section class="card">
+            <h3 class="card-title" data-i18n="secAspect">画幅与清晰度</h3>
+            <div class="seg-group" id="aspectGroup">
+              <button class="seg-btn active" data-val="9:16">9:16</button>
+              <button class="seg-btn" data-val="3:4">3:4</button>
+              <button class="seg-btn" data-val="4:5">4:5</button>
+              <button class="seg-btn" data-val="1:1">1:1</button>
+            </div>
+            <div class="seg-group mt-8" id="resGroup">
+              <button class="seg-btn active" data-val="1080p" data-i18n="res1080">1080p 高清</button>
+              <button class="seg-btn" data-val="720p" data-i18n="res720">720p 轻量</button>
+            </div>
+          </section>
+
+          <section class="card">
+            <h3 class="card-title" data-i18n="secFraming">全局对齐构图</h3>
+            <div class="control-row">
+              <div class="control-head">
+                <label data-i18n="lblZoom">主体缩放</label>
+                <span class="val" id="valZoom">1.00×</span>
+              </div>
+              <input type="range" id="rngZoom" min="0.65" max="1.50" step="0.02" value="1.00" />
+            </div>
+            <div class="control-row">
+              <div class="control-head">
+                <label data-i18n="lblVShift">主体上下位置</label>
+                <span class="val" id="valVShift">0%</span>
+              </div>
+              <input type="range" id="rngVShift" min="-0.15" max="0.15" step="0.01" value="0.00" />
+            </div>
+            <label class="switch-row">
+              <span data-i18n="lblAutoLevel">自动扶正身体倾斜</span>
+              <input type="checkbox" id="chkAutoLevel" checked />
+            </label>
+          </section>
+
+          <section class="card">
+            <h3 class="card-title" data-i18n="secFill">边缘补边</h3>
+            <div class="seg-group" id="fillGroup">
+              <button class="seg-btn active" data-val="blur" data-i18n="fillBlur">高斯模糊</button>
+              <button class="seg-btn" data-val="black" data-i18n="fillBlack">纯黑</button>
+              <button class="seg-btn" data-val="edge" data-i18n="fillEdge">边缘拉伸</button>
+            </div>
+          </section>
+
+          <section class="card">
+            <h3 class="card-title" data-i18n="secWatermark">日期与打卡水印</h3>
+            <label class="switch-row">
+              <span data-i18n="lblShowWm">显示日期 / 打卡天数</span>
+              <input type="checkbox" id="chkWatermark" checked />
+            </label>
+            <div id="watermarkOptions" class="mt-8">
+              <div class="control-row">
+                <label class="small-label" data-i18n="lblWmStyle">样式</label>
+                <select id="selWmStyle" class="select-input">
+                  <option value="day_date" data-i18n="wmDayDate">Day 01 · 2026.05.12</option>
+                  <option value="count_date" data-i18n="wmCountDate">第 1 次 · 2026.05.12</option>
+                  <option value="date_only" data-i18n="wmDateOnly">仅日期 (2026.05.12)</option>
+                  <option value="day_only" data-i18n="wmDayOnly">仅累计天数 (Day 01)</option>
+                </select>
+              </div>
+              <div class="control-row mt-8">
+                <label class="small-label" data-i18n="lblWmPos">位置</label>
+                <select id="selWmPos" class="select-input">
+                  <option value="bottom_left" data-i18n="posBL">左下角</option>
+                  <option value="bottom_center" data-i18n="posBC">底部居中</option>
+                  <option value="top_left" data-i18n="posTL">左上角</option>
+                  <option value="top_right" data-i18n="posTR">右上角</option>
+                </select>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <h3 class="card-title" data-i18n="secPacing">视频节奏</h3>
+            <div class="control-row">
+              <div class="control-head">
+                <label data-i18n="lblFps">切换速度</label>
+                <span class="val" id="valFps">6 张/秒</span>
+              </div>
+              <input type="range" id="rngFps" min="2" max="15" step="0.5" value="6" />
+            </div>
+            <div class="control-row">
+              <div class="control-head">
+                <label data-i18n="lblHold">末帧停留</label>
+                <span class="val" id="valHold">1.2 秒</span>
+              </div>
+              <input type="range" id="rngHold" min="0" max="3" step="0.2" value="1.2" />
+            </div>
+            <label class="switch-row">
+              <span data-i18n="lblCrossfade">平滑淡入淡出过渡</span>
+              <input type="checkbox" id="chkCrossfade" />
+            </label>
+          </section>
+        </div>
+      </aside>
+
+      <!-- Center Stage: Hero Drop Zone & Live Canvas -->
+      <section class="stage">
+        <div class="empty-state" id="emptyState">
+          <div class="drop-zone" id="dropZone">
+            <div class="hero-privacy-badge">
+              <span>🛡️</span>
+              <span data-i18n="heroBadge">100% 浏览器本地处理 · 零上传 · 隐私安全</span>
+            </div>
+            <h1 data-i18n="heroTitle">把健身打卡照，自动对齐成流畅成长视频</h1>
+            <p class="hero-desc" data-i18n="heroDesc">
+              AI 姿态识别、人物锁定、图像对齐与 MP4 视频编码全部直接在你的浏览器本地完成，照片永远不会离开你的设备。
+            </p>
+
+            <div class="empty-actions">
+              <label class="btn btn-primary btn-lg" for="fileInput">
+                <span>🖼️</span> <span data-i18n="btnHeroPhotos">选择健身照片</span>
+              </label>
+              <label class="btn btn-secondary btn-lg" for="folderInput">
+                <span>📂</span> <span data-i18n="btnHeroFolder">选择整个文件夹</span>
+              </label>
+            </div>
+
+            <div class="trust-grid">
+              <div class="trust-card">
+                <div class="trust-icon">🔒</div>
+                <div class="trust-title" data-i18n="trust1Title">照片绝不上传服务器</div>
+                <div class="trust-desc" data-i18n="trust1Desc">所有计算都在本机浏览器内存中完成，没有任何图片会经过云端或第三方接口。</div>
+              </div>
+              <div class="trust-card">
+                <div class="trust-icon">⚡</div>
+                <div class="trust-title" data-i18n="trust2Title">加载后断网也能用</div>
+                <div class="trust-desc" data-i18n="trust2Desc">首次打开自动缓存约 11MB 轻量姿态模型，随后即使关闭网络也可正常对齐和导出。</div>
+              </div>
+              <div class="trust-card">
+                <div class="trust-icon">🎯</div>
+                <div class="trust-title" data-i18n="trust3Title">自动过滤背景路人</div>
+                <div class="trust-desc" data-i18n="trust3Desc">智能识别健身房画面里的「你」，支持 JPG / PNG / WEBP / iPhone HEIC。</div>
+              </div>
+            </div>
+
+            <div class="drop-hint" data-i18n="dropHint">可直接把照片或整个文件夹拖放到这里 · 电脑 / 手机浏览器均可用</div>
+            <div class="desktop-tip">
+              <a href="https://github.com/semico/Match-Still" target="_blank" rel="noopener" data-i18n="desktopTip">
+                需要直接读取 macOS「照片」App 相簿？可前往 GitHub 使用本地 Python 桌面版。
+              </a>
+            </div>
+          </div>
+        </div>
+
+        <!-- Active Canvas Workspace -->
+        <div class="canvas-workspace hidden" id="canvasWorkspace">
+          <div class="stage-toolbar">
+            <div class="toolbar-group">
+              <button class="chip-btn" id="btnPlay" data-i18n="btnPlay">▶ 播放预览</button>
+              <button class="chip-btn active" id="btnGuides" data-i18n="btnGuides">✚ 对齐辅助线</button>
+              <button class="chip-btn" id="btnOnion" data-i18n="btnOnion">◐ 叠影对照</button>
+            </div>
+            <div class="toolbar-meta" id="stageCounter">1 / 1</div>
+          </div>
+
+          <div class="viewport-wrap">
+            <div class="preview-frame" id="previewFrame">
+              <canvas id="previewCanvas" width="540" height="960"></canvas>
+              <canvas id="onionCanvas" class="onion-overlay hidden" width="540" height="960"></canvas>
+              <div class="drag-hint" data-i18n="dragHint">拖拽画面微调位置 · 滚轮微调缩放</div>
+            </div>
+          </div>
+
+          <div class="stage-nav">
+            <button class="btn btn-ghost" id="btnPrev" data-i18n="btnPrev">← 上一张</button>
+            <span class="shortcut-hint" data-i18n="shortcutHint">方向键切图 · 空格播放 · G 辅助线 · O 叠影 · X 跳过</span>
+            <button class="btn btn-ghost" id="btnNext" data-i18n="btnNext">下一张 →</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Panel: Current Frame Fine-Tuning -->
+      <aside class="panel panel-right">
+        <div class="panel-scroll" id="inspectorEmpty">
+          <div class="muted-center" data-i18n="inspectorEmpty">选择照片后，可在此逐帧微调对齐，或点击切换识别到的人物主体。</div>
+        </div>
+
+        <div class="panel-scroll hidden" id="inspectorPanel">
+          <section class="card">
+            <div class="inspector-head">
+              <div>
+                <div class="item-title" id="insFilename">-</div>
+                <div class="item-meta" id="insMeta">-</div>
+              </div>
+              <label class="toggle-pill">
+                <input type="checkbox" id="chkItemEnabled" checked />
+                <span id="lblItemEnabled">已保留</span>
+              </label>
+            </div>
+            <div class="warning-box hidden" id="insWarning"></div>
+          </section>
+
+          <section class="card">
+            <div class="card-head-row">
+              <h3 class="card-title" data-i18n="secSubject">主体选择（点击切换人物）</h3>
+              <span class="badge" id="insCandCount">1</span>
+            </div>
+            <div class="source-picker-wrap">
+              <img id="sourceImg" alt="Source Photo" />
+              <div id="candidateOverlay" class="candidate-overlay"></div>
+            </div>
+            <div class="small-hint mt-6" data-i18n="subjectHint">如果某张合照误框选了背景路人，点击原图中你自己的方框即可重新对齐。</div>
+          </section>
+
+          <section class="card">
+            <div class="card-head-row">
+              <h3 class="card-title" data-i18n="secFineTune">单帧微调</h3>
+              <button class="link-btn" id="btnResetItem" data-i18n="btnReset">重置</button>
+            </div>
+            <div class="control-row">
+              <div class="control-head">
+                <label data-i18n="lblDx">水平偏移 X</label>
+                <span class="val" id="valItemDx">0%</span>
+              </div>
+              <input type="range" id="rngItemDx" min="-0.30" max="0.30" step="0.005" value="0" />
+            </div>
+            <div class="control-row">
+              <div class="control-head">
+                <label data-i18n="lblDy">垂直偏移 Y</label>
+                <span class="val" id="valItemDy">0%</span>
+              </div>
+              <input type="range" id="rngItemDy" min="-0.30" max="0.30" step="0.005" value="0" />
+            </div>
+            <div class="control-row">
+              <div class="control-head">
+                <label data-i18n="lblScale">单独缩放</label>
+                <span class="val" id="valItemScale">1.00×</span>
+              </div>
+              <input type="range" id="rngItemScale" min="0.60" max="1.60" step="0.01" value="1.00" />
+            </div>
+            <div class="control-row">
+              <div class="control-head">
+                <label data-i18n="lblAngle">角度微调</label>
+                <span class="val" id="valItemAngle">0.0°</span>
+              </div>
+              <input type="range" id="rngItemAngle" min="-20" max="20" step="0.5" value="0" />
+            </div>
+          </section>
+        </div>
+      </aside>
+    </main>
+
+    <!-- Bottom Filmstrip -->
+    <footer class="filmstrip-bar hidden" id="filmstripBar">
+      <div class="filmstrip-head">
+        <div class="filmstrip-stats" id="filmstripStats">-</div>
+        <div class="filmstrip-controls">
+          <label class="btn btn-secondary btn-xs" for="fileInput" data-i18n="btnAddMore">+ 追加照片</label>
+          <button class="btn btn-ghost btn-xs" id="btnClearAll" data-i18n="btnClearAll">清空重选</button>
+          <select id="selSort" class="select-input select-sm">
+            <option value="date_asc" data-i18n="sortDateAsc">按拍摄日期升序</option>
+            <option value="date_desc" data-i18n="sortDateDesc">按拍摄日期降序</option>
+            <option value="filename_asc" data-i18n="sortNameAsc">按文件名排序</option>
+          </select>
+        </div>
+      </div>
+      <div class="filmstrip-track" id="filmstripTrack"></div>
+    </footer>
+  </div>
+
+  <!-- Modal: Privacy & Local Execution Guarantee -->
+  <div class="modal-backdrop hidden" id="privacyModal">
+    <div class="modal modal-wide">
+      <div class="modal-head">
+        <h3 data-i18n="privModalTitle">🔒 隐私保护与纯本地运行说明</h3>
+        <button class="icon-close" data-close="privacyModal">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc" data-i18n="privModalLead"></p>
+        <div id="privPointsList" class="priv-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Export Result -->
+  <div class="modal-backdrop hidden" id="exportModal">
+    <div class="modal modal-wide">
+      <div class="modal-head">
+        <h3 data-i18n="expModalTitle">视频已在本机生成完成</h3>
+        <button class="icon-close" data-close="exportModal">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="export-video-wrap">
+          <video id="exportVideoPlayer" controls autoplay loop playsinline></video>
+        </div>
+        <div class="export-privacy-bar" data-i18n="expPrivacyNote">
+          🔒 本视频 100% 在你的浏览器本地编码生成，原始照片从未离开你的设备。
+        </div>
+        <div class="export-meta" id="exportMeta"></div>
+        <div class="export-actions">
+          <a class="btn btn-primary" id="btnDownloadMp4" download="eachday_timelapse.mp4" data-i18n="expDownload">⬇️ 保存视频到本地</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast hidden" id="toast"></div>
+
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
