@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>EachDay · 100% 本地每日变化对齐工作室（照片绝不上传）</title>
   <meta name="description" content="100% in-browser local photo alignment and timelapse studio for gym progress, daily selfies, baby growth, OOTD, pets & plants. Zero uploads." />
+  <meta name="theme-color" content="#0b0d12" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" type="image/svg+xml" href="./icon.svg" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
@@ -33,11 +36,15 @@
           <span>🖼️</span> <span data-i18n="btnSelectPhotos">选择照片</span>
         </label>
         <button class="btn btn-secondary" id="btnCompare" disabled>
-          <span>🪞</span> <span data-i18n="btnCompare">首尾对比图</span>
+          <span>🪞</span> <span data-i18n="btnCompare">对比 / 海报</span>
+        </button>
+        <button class="btn btn-secondary" id="btnExportGif" disabled>
+          <span>🎞️</span> <span data-i18n="btnExportGif">导出 GIF</span>
         </button>
         <button class="btn btn-primary" id="btnExport" disabled>
           <span>🎬</span> <span data-i18n="btnExport">导出 MP4</span>
         </button>
+        <button class="btn btn-secondary hidden" id="btnInstallPwa" type="button" data-i18n="btnInstallPwa">📲 安装应用</button>
         <button class="btn btn-ghost lang-btn" id="btnLang" title="Switch Language">EN</button>
         <a class="btn btn-ghost github-btn" href="https://github.com/semico/Each-Day" target="_blank" rel="noopener" title="GitHub">
           GitHub ↗
@@ -49,6 +56,8 @@
     <input type="file" id="fileInput" multiple accept="image/*,.heic,.heif" hidden />
     <input type="file" id="folderInput" webkitdirectory directory multiple hidden />
     <input type="file" id="projectInput" accept=".json,application/json" hidden />
+    <input type="file" id="stickerImgInput" accept="image/*" hidden />
+    <input type="file" id="audioInput" accept="audio/*,.mp3,.m4a,.wav,.ogg" hidden />
 
     <!-- Progress Banner -->
     <div class="status-bar hidden" id="statusBar">
@@ -78,11 +87,13 @@
 
           <section class="card">
             <h3 class="card-title" data-i18n="secAspect">画幅与清晰度</h3>
-            <div class="seg-group" id="aspectGroup">
+            <div class="seg-group seg-grid-3" id="aspectGroup">
               <button class="seg-btn active" data-val="9:16">9:16</button>
               <button class="seg-btn" data-val="3:4">3:4</button>
               <button class="seg-btn" data-val="4:5">4:5</button>
               <button class="seg-btn" data-val="1:1">1:1</button>
+              <button class="seg-btn" data-val="4:3">4:3</button>
+              <button class="seg-btn" data-val="16:9">16:9</button>
             </div>
             <div class="seg-group mt-8" id="resGroup">
               <button class="seg-btn active" data-val="1080p" data-i18n="res1080">1080p 高清</button>
@@ -146,14 +157,34 @@
                 <button class="seg-btn" data-val="mosaic" data-i18n="maskMosaic">马赛克</button>
               </div>
             </div>
-            <div id="emojiPickerRow" class="emoji-row hidden">
-              <button class="emoji-btn active" data-emoji="😎" type="button">😎</button>
-              <button class="emoji-btn" data-emoji="🙂" type="button">🙂</button>
-              <button class="emoji-btn" data-emoji="🐱" type="button">🐱</button>
-              <button class="emoji-btn" data-emoji="🐻" type="button">🐻</button>
-              <button class="emoji-btn" data-emoji="🤖" type="button">🤖</button>
-              <button class="emoji-btn" data-emoji="✨" type="button">✨</button>
-              <button class="emoji-btn" data-emoji="🏋️" type="button">🏋️</button>
+            <div id="emojiPickerRow" class="sticker-panel hidden">
+              <div class="emoji-row">
+                <button class="emoji-btn active" data-emoji="😎" type="button">😎</button>
+                <button class="emoji-btn" data-emoji="🙂" type="button">🙂</button>
+                <button class="emoji-btn" data-emoji="😊" type="button">😊</button>
+                <button class="emoji-btn" data-emoji="🥳" type="button">🥳</button>
+                <button class="emoji-btn" data-emoji="🤩" type="button">🤩</button>
+                <button class="emoji-btn" data-emoji="🤭" type="button">🤭</button>
+                <button class="emoji-btn" data-emoji="🤫" type="button">🤫</button>
+                <button class="emoji-btn" data-emoji="🐱" type="button">🐱</button>
+                <button class="emoji-btn" data-emoji="🐶" type="button">🐶</button>
+                <button class="emoji-btn" data-emoji="🐻" type="button">🐻</button>
+                <button class="emoji-btn" data-emoji="🦊" type="button">🦊</button>
+                <button class="emoji-btn" data-emoji="🤖" type="button">🤖</button>
+                <button class="emoji-btn" data-emoji="✨" type="button">✨</button>
+                <button class="emoji-btn" data-emoji="🏋️" type="button">🏋️</button>
+              </div>
+              <div class="sticker-custom-row mt-8">
+                <input type="text" id="txtCustomSticker" class="text-input" placeholder="输入任意表情/文字 (如 🦄 / VIP)" maxlength="10" />
+                <label class="btn btn-secondary btn-xs sticker-upload-btn" for="stickerImgInput" data-i18n="btnUploadSticker">
+                  🖼️ 上传图片
+                </label>
+              </div>
+              <div id="customStickerPreview" class="custom-sticker-chip mt-6 hidden">
+                <img id="customStickerThumb" alt="Custom Sticker" />
+                <span data-i18n="lblCustomImgActive">已启用自定义图片贴纸</span>
+                <button class="icon-close" id="btnClearStickerImg" type="button" title="Remove">✕</button>
+              </div>
             </div>
             <div id="maskSizeRow" class="control-row mt-8 hidden">
               <div class="control-head">
@@ -265,6 +296,41 @@
               <input type="checkbox" id="chkCrossfade" />
             </label>
           </section>
+
+          <section class="card">
+            <h3 class="card-title" data-i18n="secBgm">本地配乐与踩点 (BGM)</h3>
+            <label class="btn btn-secondary btn-full" for="audioInput" data-i18n="btnPickAudio">
+              🎵 选择本地音频 (MP3/M4A/WAV)
+            </label>
+            <div id="bgmChip" class="bgm-chip mt-8 hidden">
+              <span id="bgmName">-</span>
+              <button class="icon-close" id="btnClearBgm" type="button" title="Remove">✕</button>
+            </div>
+            <div id="bgmVolRow" class="control-row mt-8 hidden">
+              <div class="control-head">
+                <label data-i18n="lblBgmVol">配乐音量</label>
+                <span class="val" id="valBgmVol">80%</span>
+              </div>
+              <input type="range" id="rngBgmVol" min="0.1" max="1.0" step="0.05" value="0.8" />
+            </div>
+            <div class="divider-line"></div>
+            <label class="switch-row">
+              <span data-i18n="lblBeatSync">按 BPM 节拍自动切图</span>
+              <input type="checkbox" id="chkBeatSync" />
+            </label>
+            <div id="beatSyncBox" class="mt-8 hidden">
+              <div class="bpm-row">
+                <input type="number" id="numBpm" class="text-input bpm-input" min="50" max="220" value="120" />
+                <span class="small-label">BPM</span>
+                <button class="btn btn-secondary btn-xs" id="btnTapBpm" type="button" data-i18n="btnTapBpm">🥁 点击测速</button>
+              </div>
+              <div class="seg-group mt-8" id="beatDivGroup">
+                <button class="seg-btn" data-val="0.5" data-i18n="beatTwo">每 2 拍 (0.5×)</button>
+                <button class="seg-btn active" data-val="1" data-i18n="beatOne">每 1 拍</button>
+                <button class="seg-btn" data-val="2" data-i18n="beatHalf">每半拍 (2×)</button>
+              </div>
+            </div>
+          </section>
         </div>
       </aside>
 
@@ -312,6 +378,9 @@
               <label class="btn btn-secondary btn-lg" for="folderInput">
                 <span>📂</span> <span data-i18n="btnHeroFolder">选择整个文件夹</span>
               </label>
+              <button class="btn btn-secondary btn-lg demo-btn" id="btnLoadDemo" type="button" data-i18n="btnTryDemo">
+                ✨ 体验示例
+              </button>
               <label class="btn btn-ghost btn-lg" for="projectInput">
                 <span data-i18n="btnLoadProject">📥 导入配置</span>
               </label>
@@ -351,6 +420,8 @@
               <button class="chip-btn" id="btnPlay" data-i18n="btnPlay">▶ 播放预览</button>
               <button class="chip-btn active" id="btnGuides" data-i18n="btnGuides">✚ 对齐辅助线</button>
               <button class="chip-btn" id="btnOnion" data-i18n="btnOnion">◐ 叠影对照</button>
+              <button class="chip-btn undo-btn" id="btnUndo" type="button" disabled title="Undo">↶</button>
+              <button class="chip-btn undo-btn" id="btnRedo" type="button" disabled title="Redo">↷</button>
             </div>
             <div class="toolbar-meta" id="stageCounter">1 / 1</div>
           </div>
@@ -388,6 +459,10 @@
                 <input type="checkbox" id="chkItemEnabled" checked />
                 <span id="lblItemEnabled">已保留</span>
               </label>
+            </div>
+            <div class="date-edit-row mt-8">
+              <label class="small-label" for="inpItemDate" data-i18n="lblEditDate">拍摄日期</label>
+              <input type="date" id="inpItemDate" class="date-input" />
             </div>
             <div class="inspector-quick-btns mt-8">
               <button class="milestone-btn" id="btnMilestone" type="button" data-i18n="btnMilestoneOff">
@@ -499,47 +574,82 @@
     </div>
   </div>
 
-  <!-- Modal: Before / After Side-by-Side Comparison -->
+  <!-- Modal: Before / After Comparison, Wipe Video & Progress Grid Poster -->
   <div class="modal-backdrop hidden" id="compareModal">
     <div class="modal modal-xl">
       <div class="modal-head">
-        <h3 data-i18n="cmpModalTitle">🪞 首尾对比图生成（Before / After）</h3>
+        <h3 data-i18n="cmpModalTitle">🪞 前后对比 & 成长九宫格海报</h3>
         <button class="icon-close" data-close="compareModal">✕</button>
       </div>
       <div class="modal-body">
-        <div class="compare-selectors">
-          <div class="compare-sel-col">
-            <label class="small-label" data-i18n="cmpLeftLbl">左侧（初始）</label>
-            <select id="selCmpLeft" class="select-input"></select>
+        <div class="seg-group mb-12" id="compareTabGroup">
+          <button class="seg-btn active" data-tab="compare" data-i18n="tabBeforeAfter">🪞 左右对比 / 拉帘视频</button>
+          <button class="seg-btn" data-tab="poster" data-i18n="tabGridPoster">🖼️ 成长九宫格海报</button>
+        </div>
+
+        <!-- Tab 1: Before / After Split & Wipe Video -->
+        <div id="tabComparePane">
+          <div class="compare-selectors">
+            <div class="compare-sel-col">
+              <label class="small-label" data-i18n="cmpLeftLbl">左侧（初始）</label>
+              <select id="selCmpLeft" class="select-input"></select>
+            </div>
+            <div class="compare-sel-col">
+              <label class="small-label" data-i18n="cmpRightLbl">右侧（最新）</label>
+              <select id="selCmpRight" class="select-input"></select>
+            </div>
           </div>
-          <div class="compare-sel-col">
-            <label class="small-label" data-i18n="cmpRightLbl">右侧（最新）</label>
-            <select id="selCmpRight" class="select-input"></select>
+          <div class="compare-preview-wrap">
+            <img id="comparePreviewImg" alt="Before / After Comparison" />
+          </div>
+          <div class="export-privacy-bar" data-i18n="cmpPrivacyNote">
+            🔒 对比图与海报已自动同步当前对齐、色调统一、标签与人脸隐私打码，100% 本地生成。
+          </div>
+          <div class="export-actions">
+            <button class="btn btn-secondary" id="btnExportWipe" type="button" data-i18n="cmpExportWipe">🎬 导出拉帘对比视频 (MP4)</button>
+            <a class="btn btn-primary" id="btnDownloadCompare" download="eachday_before_after.png" data-i18n="cmpDownload">⬇️ 保存对比图 (PNG)</a>
           </div>
         </div>
-        <div class="compare-preview-wrap">
-          <img id="comparePreviewImg" alt="Before / After Comparison" />
-        </div>
-        <div class="export-privacy-bar" data-i18n="cmpPrivacyNote">
-          🔒 对比图已自动同步当前对齐构图、标签水印与人脸隐私打码，100% 本地生成。
-        </div>
-        <div class="export-actions">
-          <a class="btn btn-primary" id="btnDownloadCompare" download="eachday_before_after.png" data-i18n="cmpDownload">⬇️ 保存高清对比图 (PNG)</a>
+
+        <!-- Tab 2: Progress Grid Collage Poster -->
+        <div id="tabPosterPane" class="hidden">
+          <div class="compare-selectors">
+            <div class="compare-sel-col">
+              <label class="small-label" data-i18n="lblPosterTitle">海报标题</label>
+              <input type="text" id="txtPosterTitle" class="text-input" value="我的 EachDay 成长记录" maxlength="40" />
+            </div>
+            <div class="compare-sel-col">
+              <label class="small-label" data-i18n="lblGridCount">拼图格数</label>
+              <div class="seg-group" id="posterGridGroup">
+                <button class="seg-btn" data-val="4">2×2 (4)</button>
+                <button class="seg-btn" data-val="6">3×2 (6)</button>
+                <button class="seg-btn active" data-val="9">3×3 (9)</button>
+                <button class="seg-btn" data-val="12">4×3 (12)</button>
+              </div>
+            </div>
+          </div>
+          <div class="compare-preview-wrap">
+            <img id="posterPreviewImg" alt="Progress Grid Poster" />
+          </div>
+          <div class="export-actions">
+            <a class="btn btn-primary" id="btnDownloadPoster" download="eachday_grid_poster.png" data-i18n="btnDownloadPoster">⬇️ 保存高清海报 (PNG)</a>
+          </div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Modal: Export Result -->
+  <!-- Modal: Export Result (MP4 or GIF) -->
   <div class="modal-backdrop hidden" id="exportModal">
     <div class="modal modal-wide">
       <div class="modal-head">
-        <h3 data-i18n="expModalTitle">视频已在本机生成完成</h3>
+        <h3 id="exportModalTitle" data-i18n="expModalTitle">视频已在本机生成完成</h3>
         <button class="icon-close" data-close="exportModal">✕</button>
       </div>
       <div class="modal-body">
         <div class="export-video-wrap">
           <video id="exportVideoPlayer" controls autoplay loop playsinline></video>
+          <img id="exportGifPreview" class="hidden" alt="Exported GIF" />
         </div>
         <div class="export-privacy-bar" data-i18n="expPrivacyNote">
           🔒 本视频 100% 在你的浏览器本地编码生成，原始照片从未离开你的设备。

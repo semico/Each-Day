@@ -13,11 +13,14 @@ import {
   trackSelectedPersonAcrossBatch,
 } from "./aligner.js";
 import { computeBatchColorTarget, computePhotoColorStats } from "./color.js";
-import { getCanvasSize, renderAlignedToCanvas, renderComparisonCanvas } from "./renderer.js";
-import { exportTimelapseLocal } from "./exporter.js";
+import { getCanvasSize, renderAlignedToCanvas, renderComparisonCanvas, renderGridPosterCanvas } from "./renderer.js";
+import { exportGifLocal, exportTimelapseLocal, exportWipeVideoLocal } from "./exporter.js";
+import { LocalAudioManager, computeTappedBpm } from "./audio.js";
+import { generateDemoItems } from "./demo.js";
 
 const $ = (id) => document.getElementById(id);
 const SETTINGS_STORAGE_KEY = "eachday_settings_v2";
+const audioMgr = new LocalAudioManager();
 
 const DEFAULT_SETTINGS = {
   alignMode: "body", // "body" | "face" | "points"
@@ -45,6 +48,10 @@ const DEFAULT_SETTINGS = {
   milestoneHoldSec: 0.8,
   holdLastSec: 1.2,
   crossfade: false,
+  beatSync: false,
+  bpm: 120,
+  beatDiv: 1,
+  bgmVolume: 0.8,
 };
 
 function loadSavedSettings() {
@@ -81,6 +88,14 @@ const state = {
   playTimer: null,
   lastExportUrl: null,
   lastCompareUrl: null,
+  lastPosterUrl: null,
+  posterGridCount: 9,
+  customStickerImg: null,
+  customStickerUrl: null,
+  undoStack: [],
+  redoStack: [],
+  tapTimes: [],
+  deferredInstallPrompt: null,
   settings: loadSavedSettings(),
 };
 
@@ -112,6 +127,12 @@ function applyI18n() {
   document.documentElement.lang = state.lang === "zh" ? "zh-CN" : "en";
   $("btnLang").textContent = state.lang === "zh" ? "EN" : "中文";
   $("btnPrivacyInfo").title = t("privacyPillTitle");
+  if ($("txtCustomSticker")) $("txtCustomSticker").placeholder = t("phCustomSticker");
+  if ($("btnUndo")) $("btnUndo").title = t("btnUndoTitle");
+  if ($("btnRedo")) $("btnRedo").title = t("btnRedoTitle");
+  if ($("txtPosterTitle") && !$("txtPosterTitle").dataset.edited) {
+    $("txtPosterTitle").value = t("posterDefaultTitle");
+  }
 
   document.querySelectorAll("[data-i18n]").forEach((el) => {
     const key = el.getAttribute("data-i18n");
@@ -174,10 +195,31 @@ function syncColorRefSelect() {
   sel.value = state.colorRefId || "";
 }
 
+function fitPreviewFrameToViewport() {
+  const wrap = document.querySelector(".viewport-wrap");
+  const frame = $("previewFrame");
+  if (!wrap || !frame) return;
+  const rect = wrap.getBoundingClientRect();
+  if (rect.width < 20 || rect.height < 20) return;
+
+  const [rw, rh] = state.settings.aspectRatio.split(":").map(Number);
+  const aspect = rw / rh;
+  let w = rect.width;
+  let h = w / aspect;
+  if (h > rect.height) {
+    h = rect.height;
+    w = h * aspect;
+  }
+  frame.style.width = `${Math.floor(w)}px`;
+  frame.style.height = `${Math.floor(h)}px`;
+}
+
 function syncPreviewResolution() {
   const [fullW, fullH] = getCanvasSize(state.settings);
-  const previewW = 540;
-  const previewH = Math.round((fullH / fullW) * previewW);
+  const maxPreviewSide = 720;
+  const scale = maxPreviewSide / Math.max(fullW, fullH);
+  const previewW = Math.max(240, Math.round(fullW * scale));
+  const previewH = Math.max(240, Math.round(fullH * scale));
 
   const c1 = $("previewCanvas");
   const c2 = $("onionCanvas");
@@ -187,8 +229,7 @@ function syncPreviewResolution() {
     c2.width = previewW;
     c2.height = previewH;
   }
-  const [rw, rh] = state.settings.aspectRatio.split(":").map(Number);
-  $("previewFrame").style.aspectRatio = `${rw} / ${rh}`;
+  fitPreviewFrameToViewport();
 }
 
 function syncSettingsUI() {
@@ -219,8 +260,13 @@ function syncSettingsUI() {
   $("emojiPickerRow").classList.toggle("hidden", s.selfMask !== "emoji");
   $("maskSizeRow").classList.toggle("hidden", s.selfMask === "none" && s.bgMask === "none");
   document.querySelectorAll("#emojiPickerRow .emoji-btn").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.emoji === s.selfEmoji);
+    btn.classList.toggle("active", !state.customStickerImg && btn.dataset.emoji === s.selfEmoji);
   });
+  if ($("txtCustomSticker") && document.activeElement !== $("txtCustomSticker")) {
+    $("txtCustomSticker").value = state.customStickerImg ? "" : (s.selfEmoji || "");
+  }
+  $("customStickerPreview").classList.toggle("hidden", !state.customStickerImg);
+  if (state.customStickerUrl) $("customStickerThumb").src = state.customStickerUrl;
   $("rngMaskScale").value = s.maskScale;
   $("valMaskScale").textContent = `${Number(s.maskScale).toFixed(2)}×`;
 
@@ -243,12 +289,32 @@ function syncSettingsUI() {
   $("progressPosRow").classList.toggle("hidden", !s.showProgressBar);
 
   $("rngFps").value = s.fps;
-  $("valFps").textContent = `${s.fps} ${t("unitFps")}`;
+  $("valFps").textContent = `${Number(s.fps).toFixed(s.fps % 1 === 0 ? 0 : 1)} ${t("unitFps")}`;
   $("rngMilestoneHold").value = s.milestoneHoldSec;
   $("valMilestoneHold").textContent = `${Number(s.milestoneHoldSec).toFixed(1)} ${t("unitSec")}`;
   $("rngHold").value = s.holdLastSec;
   $("valHold").textContent = `${Number(s.holdLastSec).toFixed(1)} ${t("unitSec")}`;
   $("chkCrossfade").checked = !!s.crossfade;
+
+  // BGM & BPM Sync UI
+  const hasAudio = audioMgr.hasAudio();
+  $("bgmChip").classList.toggle("hidden", !hasAudio);
+  $("bgmVolRow").classList.toggle("hidden", !hasAudio);
+  if (hasAudio) {
+    const mins = Math.floor(audioMgr.duration / 60);
+    const secs = String(Math.floor(audioMgr.duration % 60)).padStart(2, "0");
+    $("bgmName").textContent = `🎵 ${audioMgr.filename} (${mins}:${secs})`;
+  }
+  $("rngBgmVol").value = s.bgmVolume;
+  $("valBgmVol").textContent = `${Math.round(s.bgmVolume * 100)}%`;
+  audioMgr.setVolume(s.bgmVolume);
+
+  $("chkBeatSync").checked = !!s.beatSync;
+  $("beatSyncBox").classList.toggle("hidden", !s.beatSync);
+  $("numBpm").value = s.bpm;
+  document.querySelectorAll("#beatDivGroup .seg-btn").forEach((btn) => {
+    btn.classList.toggle("active", Number(btn.dataset.val) === Number(s.beatDiv));
+  });
 
   syncPreviewResolution();
 }
@@ -267,6 +333,7 @@ function renderMainCanvas() {
     drawGuides: state.showGuides && !state.playing,
     lang: state.lang,
     batchColorTarget: state.batchColorTarget,
+    customStickerImg: state.customStickerImg,
   });
 
   const starMark = item.milestone ? " ★" : "";
@@ -305,8 +372,10 @@ function renderMainCanvas() {
 
 function renderThumbCanvas(thumbCanvas, item, seqIndex, totalEnabled, firstTimestamp) {
   const [fullW, fullH] = getCanvasSize(state.settings);
-  const tw = 120;
-  const th = Math.round((fullH / fullW) * tw);
+  const maxThumb = 140;
+  const scale = maxThumb / Math.max(fullW, fullH);
+  const tw = Math.max(64, Math.round(fullW * scale));
+  const th = Math.max(64, Math.round(fullH * scale));
   thumbCanvas.width = tw;
   thumbCanvas.height = th;
   renderAlignedToCanvas(
@@ -320,16 +389,118 @@ function renderThumbCanvas(thumbCanvas, item, seqIndex, totalEnabled, firstTimes
       drawGuides: false,
       lang: state.lang,
       batchColorTarget: state.batchColorTarget,
+      customStickerImg: state.customStickerImg,
     }
   );
 }
 
 let draggedThumbIdx = null;
 
+function captureSnapshot() {
+  return {
+    sortMode: $("selSort").value,
+    selectedId: currentItem()?.id || null,
+    orderIds: state.items.map((it) => it.id),
+    byId: Object.fromEntries(
+      state.items.map((it) => [
+        it.id,
+        {
+          enabled: it.enabled,
+          milestone: it.milestone,
+          dateStr: it.dateStr,
+          timestamp: it.timestamp,
+          dateSource: it.dateSource,
+          selectedCandidate: it.selectedCandidate,
+          selectedObject: it.selectedObject,
+          customPoints: it.customPoints.map((p) => ({ x: p.x, y: p.y })),
+          userTransform: {
+            userDx: it.transform.userDx,
+            userDy: it.transform.userDy,
+            userScale: it.transform.userScale,
+            userAngleDeg: it.transform.userAngleDeg,
+          },
+        },
+      ])
+    ),
+  };
+}
+
+function applySnapshot(snap) {
+  if (!snap) return;
+  const map = new Map(state.items.map((it) => [it.id, it]));
+  const reordered = [];
+  for (const id of snap.orderIds) {
+    if (map.has(id)) {
+      reordered.push(map.get(id));
+      map.delete(id);
+    }
+  }
+  for (const rest of map.values()) reordered.push(rest);
+  state.items = reordered;
+
+  for (const it of state.items) {
+    const s = snap.byId[it.id];
+    if (!s) continue;
+    it.enabled = s.enabled;
+    it.milestone = s.milestone;
+    it.dateStr = s.dateStr;
+    it.timestamp = s.timestamp;
+    it.dateSource = s.dateSource;
+    it.selectedCandidate = s.selectedCandidate;
+    it.selectedObject = s.selectedObject;
+    it.customPoints = s.customPoints.map((p) => ({ x: p.x, y: p.y }));
+    it.transform.userDx = s.userTransform.userDx;
+    it.transform.userDy = s.userTransform.userDy;
+    it.transform.userScale = s.userTransform.userScale;
+    it.transform.userAngleDeg = s.userTransform.userAngleDeg;
+  }
+
+  $("selSort").value = snap.sortMode;
+  recomputeBatchTransforms(state.items, state.proportions, state.settings.alignMode);
+  refreshBatchColorTarget();
+  const idx = state.items.findIndex((it) => it.id === snap.selectedId);
+  if (idx >= 0) state.selectedIndex = idx;
+  renderFilmstrip();
+  renderMainCanvas();
+  renderInspector();
+}
+
+function syncUndoButtons() {
+  if ($("btnUndo")) $("btnUndo").disabled = state.undoStack.length === 0;
+  if ($("btnRedo")) $("btnRedo").disabled = state.redoStack.length === 0;
+}
+
+function pushHistory() {
+  if (!state.items.length) return;
+  state.undoStack.push(captureSnapshot());
+  if (state.undoStack.length > 40) state.undoStack.shift();
+  state.redoStack = [];
+  syncUndoButtons();
+}
+
+function performUndo() {
+  if (!state.undoStack.length) return;
+  stopPlay();
+  state.redoStack.push(captureSnapshot());
+  const prev = state.undoStack.pop();
+  applySnapshot(prev);
+  syncUndoButtons();
+}
+
+function performRedo() {
+  if (!state.redoStack.length) return;
+  stopPlay();
+  state.undoStack.push(captureSnapshot());
+  const next = state.redoStack.pop();
+  applySnapshot(next);
+  syncUndoButtons();
+}
+
 function moveItem(fromIdx, toIdx) {
   if (fromIdx === toIdx || fromIdx < 0 || toIdx < 0 || fromIdx >= state.items.length || toIdx >= state.items.length) {
     return;
   }
+  pushHistory();
   const activeId = currentItem()?.id;
   const [moved] = state.items.splice(fromIdx, 1);
   state.items.splice(toIdx, 0, moved);
@@ -350,13 +521,19 @@ function renderFilmstrip() {
   const firstTs = enabled.length ? enabled[0].timestamp : Date.now() / 1000;
   $("filmstripStats").textContent = t("statsFmt", state.items.length, enabled.length);
   $("btnExport").disabled = enabled.length === 0 || state.busy;
+  $("btnExportGif").disabled = enabled.length === 0 || state.busy;
   $("btnCompare").disabled = enabled.length < 2 || state.busy;
+
+  const [arW, arH] = state.settings.aspectRatio.split(":").map(Number);
+  const thumbH = 86;
+  const thumbW = Math.max(54, Math.min(132, Math.round((thumbH * arW) / arH)));
 
   let seq = 0;
   state.items.forEach((item, idx) => {
     if (item.enabled) seq += 1;
     const card = document.createElement("div");
     card.className = "thumb-card" + (idx === state.selectedIndex ? " active" : "") + (!item.enabled ? " disabled" : "");
+    card.style.width = `${thumbW}px`;
     card.dataset.index = idx;
     card.draggable = true;
 
@@ -488,8 +665,11 @@ function renderInspector() {
   $("inspectorPanel").classList.remove("hidden");
 
   $("insFilename").textContent = item.filename;
-  const srcMap = { exif: t("srcExif"), filename: t("srcFilename"), mtime: t("srcMtime") };
+  const srcMap = { exif: t("srcExif"), filename: t("srcFilename"), mtime: t("srcMtime"), manual: t("srcManual") };
   $("insMeta").textContent = `${item.dateStr} (${srcMap[item.dateSource] || item.dateSource}) · ${item.width}×${item.height}`;
+  if ($("inpItemDate")) {
+    $("inpItemDate").value = item.dateStr.replace(/\./g, "-");
+  }
 
   $("chkItemEnabled").checked = !!item.enabled;
   $("lblItemEnabled").textContent = item.enabled ? t("lblKeep") : t("lblSkip");
@@ -659,8 +839,11 @@ function updateWorkspaceVisibility() {
   $("emptyState").classList.toggle("hidden", has);
   $("canvasWorkspace").classList.toggle("hidden", !has);
   $("filmstripBar").classList.toggle("hidden", !has);
+  if (has) requestAnimationFrame(fitPreviewFrameToViewport);
   $("btnExport").disabled = enabledCount === 0 || state.busy;
+  $("btnExportGif").disabled = enabledCount === 0 || state.busy;
   $("btnCompare").disabled = enabledCount < 2 || state.busy;
+  syncUndoButtons();
 
   const item = currentItem();
   const mode = state.settings.alignMode;
@@ -690,6 +873,8 @@ function saveProjectConfig() {
       key: `${it.filename}::${it.dateStr}`,
       filename: it.filename,
       dateStr: it.dateStr,
+      timestamp: it.timestamp,
+      dateSource: it.dateSource,
       order: idx,
       enabled: !!it.enabled,
       milestone: !!it.milestone,
@@ -742,6 +927,11 @@ function applyProjectConfigToLoadedItems(proj) {
     item._savedOrder = typeof rec.order === "number" ? rec.order : 1e8;
     if (typeof rec.enabled === "boolean") item.enabled = rec.enabled;
     if (typeof rec.milestone === "boolean") item.milestone = rec.milestone;
+    if (rec.dateSource === "manual" && rec.dateStr && rec.timestamp) {
+      item.dateStr = rec.dateStr;
+      item.timestamp = rec.timestamp;
+      item.dateSource = "manual";
+    }
     if (
       typeof rec.selectedCandidate === "number" &&
       rec.selectedCandidate >= 0 &&
@@ -1102,7 +1292,25 @@ function sortItemsList(list, mode) {
   }
 }
 
-// Live Playback Preview (honors Milestone Extra Hold!)
+function loadDemoSession() {
+  if (state.busy) return;
+  stopPlay();
+  const demoItems = generateDemoItems();
+  state.undoStack = [];
+  state.redoStack = [];
+  state.colorRefId = null;
+  state.items = demoItems;
+  state.selectedIndex = 0;
+  state.proportions = finalizeBatchAlignment(state.items, state.settings.alignMode);
+  refreshBatchColorTarget();
+  updateWorkspaceVisibility();
+  renderFilmstrip();
+  renderMainCanvas();
+  renderInspector();
+  showToast(t("stDemoLoaded"), 4200);
+}
+
+// Live Playback Preview (honors Milestone Extra Hold + synced Local BGM!)
 function togglePlay() {
   if (state.playing) {
     stopPlay();
@@ -1118,6 +1326,7 @@ function togglePlay() {
   $("btnPlay").classList.add("active");
   $("btnPlay").textContent = t("btnPause");
   $("onionCanvas").classList.add("hidden");
+  if (audioMgr.hasAudio()) audioMgr.playLoop(0);
 
   let pos = Math.max(0, enabledIndices.indexOf(state.selectedIndex));
   const baseMs = Math.round(1000 / Math.max(1, state.settings.fps));
@@ -1135,6 +1344,7 @@ function togglePlay() {
       drawGuides: false,
       lang: state.lang,
       batchColorTarget: state.batchColorTarget,
+      customStickerImg: state.customStickerImg,
     });
     const starMark = item.milestone ? " ★" : "";
     $("stageCounter").textContent = `▶ ${pos + 1} / ${enabledIndices.length} · ${item.dateStr}${starMark}`;
@@ -1152,6 +1362,7 @@ function stopPlay() {
   state.playing = false;
   clearTimeout(state.playTimer);
   state.playTimer = null;
+  audioMgr.stop();
   $("btnPlay").classList.remove("active");
   $("btnPlay").textContent = t("btnPlay");
   selectIndex(state.selectedIndex);
@@ -1180,7 +1391,39 @@ function openCompareModal() {
   selR.value = String(enabled.length - 1);
 
   $("compareModal").classList.remove("hidden");
+  switchCompareTab("compare");
   updateComparePreview();
+}
+
+function switchCompareTab(tab) {
+  document.querySelectorAll("#compareTabGroup .seg-btn").forEach((b) => {
+    b.classList.toggle("active", b.dataset.tab === tab);
+  });
+  $("tabComparePane").classList.toggle("hidden", tab !== "compare");
+  $("tabPosterPane").classList.toggle("hidden", tab !== "poster");
+  if (tab === "poster") updatePosterPreview();
+}
+
+function updatePosterPreview() {
+  const enabled = state.items.filter((it) => it.enabled);
+  if (enabled.length < 2) return;
+  const title = $("txtPosterTitle").value || t("posterDefaultTitle");
+  const posterCanvas = renderGridPosterCanvas(enabled, state.settings, {
+    gridCount: state.posterGridCount,
+    title,
+    lang: state.lang,
+    batchColorTarget: state.batchColorTarget,
+    customStickerImg: state.customStickerImg,
+  });
+  posterCanvas.toBlob((blob) => {
+    if (!blob) return;
+    if (state.lastPosterUrl) URL.revokeObjectURL(state.lastPosterUrl);
+    state.lastPosterUrl = URL.createObjectURL(blob);
+    $("posterPreviewImg").src = state.lastPosterUrl;
+    const dl = $("btnDownloadPoster");
+    dl.href = state.lastPosterUrl;
+    dl.download = `eachday_poster_${state.posterGridCount}grid.png`;
+  }, "image/png");
 }
 
 function updateComparePreview() {
@@ -1200,7 +1443,8 @@ function updateComparePreview() {
     firstTs,
     state.settings,
     state.lang,
-    state.batchColorTarget
+    state.batchColorTarget,
+    state.customStickerImg
   );
   cmpCanvas.toBlob((blob) => {
     if (!blob) return;
@@ -1213,7 +1457,39 @@ function updateComparePreview() {
   }, "image/png");
 }
 
-// Local MP4 Export
+function openExportResultModal(blob, filename, kind = "video") {
+  if (state.lastExportUrl) URL.revokeObjectURL(state.lastExportUrl);
+  const url = URL.createObjectURL(blob);
+  state.lastExportUrl = url;
+  const sizeMb = (blob.size / (1024 * 1024)).toFixed(2);
+
+  const isGif = kind === "gif";
+  const video = $("exportVideoPlayer");
+  const gifImg = $("exportGifPreview");
+  video.classList.toggle("hidden", isGif);
+  gifImg.classList.toggle("hidden", !isGif);
+  if (isGif) {
+    video.pause();
+    video.removeAttribute("src");
+    gifImg.src = url;
+    $("exportModalTitle").textContent = t("expModalTitleGif");
+    $("btnDownloadMp4").textContent = t("expDownloadGif");
+  } else {
+    gifImg.removeAttribute("src");
+    video.src = url;
+    $("exportModalTitle").textContent = t("expModalTitle");
+    $("btnDownloadMp4").textContent = t("expDownload");
+  }
+
+  const dl = $("btnDownloadMp4");
+  dl.href = url;
+  dl.download = filename;
+  $("exportMeta").textContent = `${filename} · ${sizeMb} MB`;
+  $("exportModal").classList.remove("hidden");
+  return sizeMb;
+}
+
+// Local MP4 Export (with optional Local BGM AAC Audio!)
 async function handleExport() {
   if (state.busy || !state.items.some((it) => it.enabled)) return;
   stopPlay();
@@ -1221,11 +1497,17 @@ async function handleExport() {
   updateWorkspaceVisibility();
 
   try {
+    const audioOpts = audioMgr.hasAudio()
+      ? { audioBuffer: audioMgr.audioBuffer, volume: state.settings.bgmVolume }
+      : null;
+
     const { blob, ext } = await exportTimelapseLocal(
       state.items,
       state.settings,
       state.lang,
       state.batchColorTarget,
+      state.customStickerImg,
+      audioOpts,
       (cur, tot, phase) => {
         if (phase === "finalizing") {
           setStatus(true, t("stFinalizing"), 98);
@@ -1235,21 +1517,90 @@ async function handleExport() {
       }
     );
 
-    if (state.lastExportUrl) URL.revokeObjectURL(state.lastExportUrl);
-    const url = URL.createObjectURL(blob);
-    state.lastExportUrl = url;
-
-    const sizeMb = (blob.size / (1024 * 1024)).toFixed(2);
     const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "").slice(0, 14);
-    const filename = `eachday_${stamp}.${ext}`;
-
-    $("exportVideoPlayer").src = url;
-    const dl = $("btnDownloadMp4");
-    dl.href = url;
-    dl.download = filename;
-    $("exportMeta").textContent = `${filename} · ${sizeMb} MB`;
-    $("exportModal").classList.remove("hidden");
+    const sizeMb = openExportResultModal(blob, `eachday_${stamp}.${ext}`, "video");
     showToast(t("stExportDone", sizeMb), 3500);
+  } catch (err) {
+    console.error(err);
+    showToast(`❌ ${err.message || err}`, 4500);
+  } finally {
+    state.busy = false;
+    setStatus(false);
+    updateWorkspaceVisibility();
+  }
+}
+
+// Local Animated GIF Export
+async function handleExportGif() {
+  if (state.busy || !state.items.some((it) => it.enabled)) return;
+  stopPlay();
+  state.busy = true;
+  updateWorkspaceVisibility();
+
+  try {
+    const { blob } = await exportGifLocal(
+      state.items,
+      state.settings,
+      state.lang,
+      state.batchColorTarget,
+      state.customStickerImg,
+      (cur, tot, phase) => {
+        if (phase === "finalizing") {
+          setStatus(true, t("stFinalizing"), 98);
+        } else {
+          setStatus(true, t("stExportingGif", cur, tot), Math.round((cur / tot) * 95));
+        }
+      }
+    );
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "").slice(0, 14);
+    const sizeMb = openExportResultModal(blob, `eachday_${stamp}.gif`, "gif");
+    showToast(t("stGifDone", sizeMb), 3500);
+  } catch (err) {
+    console.error(err);
+    showToast(`❌ ${err.message || err}`, 4500);
+  } finally {
+    state.busy = false;
+    setStatus(false);
+    updateWorkspaceVisibility();
+  }
+}
+
+// Local Before / After Animated Curtain Wipe MP4 Export
+async function handleExportWipeVideo() {
+  const enabled = state.items.filter((it) => it.enabled);
+  if (state.busy || enabled.length < 2) return;
+  const li = Math.max(0, Math.min(enabled.length - 1, Number($("selCmpLeft").value) || 0));
+  const ri = Math.max(0, Math.min(enabled.length - 1, Number($("selCmpRight").value) || enabled.length - 1));
+
+  $("compareModal").classList.add("hidden");
+  stopPlay();
+  state.busy = true;
+  updateWorkspaceVisibility();
+
+  try {
+    const audioOpts = audioMgr.hasAudio()
+      ? { audioBuffer: audioMgr.audioBuffer, volume: state.settings.bgmVolume }
+      : null;
+
+    const { blob } = await exportWipeVideoLocal(
+      enabled[li],
+      enabled[ri],
+      li + 1,
+      ri + 1,
+      enabled[0].timestamp,
+      state.settings,
+      state.lang,
+      state.batchColorTarget,
+      state.customStickerImg,
+      audioOpts,
+      (cur, tot, phase) => {
+        if (phase === "finalizing") setStatus(true, t("stFinalizing"), 98);
+        else setStatus(true, t("stExportingWipe", cur, tot), Math.round((cur / tot) * 95));
+      }
+    );
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "").slice(0, 14);
+    const sizeMb = openExportResultModal(blob, `eachday_wipe_${stamp}.mp4`, "video");
+    showToast(t("stWipeDone", sizeMb), 3500);
   } catch (err) {
     console.error(err);
     showToast(`❌ ${err.message || err}`, 4500);
@@ -1301,6 +1652,7 @@ function bindPreviewInteractions() {
     if (state.playing) return;
     const item = currentItem();
     if (!item) return;
+    pushHistory();
     dragging = true;
     frame.classList.add("dragging");
     startX = e.clientX;
@@ -1476,10 +1828,23 @@ function updateGlobalSetting(patch, rebuildThumbs = false) {
 function toggleMilestoneCurrent() {
   const item = currentItem();
   if (!item) return;
+  pushHistory();
   item.milestone = !item.milestone;
   renderInspector();
   renderFilmstrip();
   renderMainCanvas();
+}
+
+function applyBpmToFps() {
+  if (!state.settings.beatSync) return;
+  const bpm = Math.max(50, Math.min(220, Number(state.settings.bpm) || 120));
+  const div = Number(state.settings.beatDiv) || 1;
+  const syncedFps = Math.max(1, Math.min(15, Math.round(((bpm / 60) * div) * 2) / 2));
+  updateGlobalSetting({ fps: syncedFps }, false);
+  if (state.playing) {
+    stopPlay();
+    togglePlay();
+  }
 }
 
 function bindEvents() {
@@ -1491,8 +1856,127 @@ function bindEvents() {
 
   $("btnPrivacyInfo").addEventListener("click", () => $("privacyModal").classList.remove("hidden"));
   $("btnCompare").addEventListener("click", openCompareModal);
+  $("btnExportGif").addEventListener("click", handleExportGif);
+  $("btnExportWipe").addEventListener("click", handleExportWipeVideo);
+  $("btnLoadDemo").addEventListener("click", loadDemoSession);
+  $("btnUndo").addEventListener("click", performUndo);
+  $("btnRedo").addEventListener("click", performRedo);
+
+  document.querySelectorAll("#compareTabGroup .seg-btn").forEach((btn) =>
+    btn.addEventListener("click", () => switchCompareTab(btn.dataset.tab))
+  );
+  document.querySelectorAll("#posterGridGroup .seg-btn").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      state.posterGridCount = Number(btn.dataset.val) || 9;
+      document.querySelectorAll("#posterGridGroup .seg-btn").forEach((b) =>
+        b.classList.toggle("active", Number(b.dataset.val) === state.posterGridCount)
+      );
+      updatePosterPreview();
+    })
+  );
+  $("txtPosterTitle").addEventListener("input", () => {
+    $("txtPosterTitle").dataset.edited = "1";
+    updatePosterPreview();
+  });
+
   $("selCmpLeft").addEventListener("change", updateComparePreview);
   $("selCmpRight").addEventListener("change", updateComparePreview);
+
+  // Local BGM Audio & BPM Beat-Sync
+  $("audioInput").addEventListener("change", async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const info = await audioMgr.loadFile(file);
+      syncSettingsUI();
+      showToast(t("stAudioLoaded", info.filename), 3200);
+    } catch {
+      showToast(`❌ ${t("errAudioLoad")}`, 3800);
+    }
+  });
+  $("btnClearBgm").addEventListener("click", () => {
+    audioMgr.clear();
+    syncSettingsUI();
+  });
+  $("rngBgmVol").addEventListener("input", (e) => {
+    updateGlobalSetting({ bgmVolume: parseFloat(e.target.value) }, false);
+  });
+  $("chkBeatSync").addEventListener("change", (e) => {
+    updateGlobalSetting({ beatSync: e.target.checked }, false);
+    if (e.target.checked) applyBpmToFps();
+  });
+  $("numBpm").addEventListener("input", (e) => {
+    const val = Math.max(50, Math.min(220, Number(e.target.value) || 120));
+    state.settings.bpm = val;
+    persistSettings(state.settings);
+    applyBpmToFps();
+  });
+  $("btnTapBpm").addEventListener("click", () => {
+    const now = performance.now();
+    if (state.tapTimes.length && now - state.tapTimes[state.tapTimes.length - 1] > 2200) {
+      state.tapTimes = [];
+    }
+    state.tapTimes.push(now);
+    if (state.tapTimes.length > 8) state.tapTimes.shift();
+    const bpm = computeTappedBpm(state.tapTimes);
+    if (bpm) {
+      state.settings.bpm = bpm;
+      state.settings.beatSync = true;
+      persistSettings(state.settings);
+      syncSettingsUI();
+      applyBpmToFps();
+    }
+  });
+  document.querySelectorAll("#beatDivGroup .seg-btn").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      state.settings.beatDiv = Number(btn.dataset.val) || 1;
+      persistSettings(state.settings);
+      syncSettingsUI();
+      applyBpmToFps();
+    })
+  );
+
+  // Manual Photo Date Editor
+  $("inpItemDate").addEventListener("change", (e) => {
+    const item = currentItem();
+    const raw = e.target.value; // YYYY-MM-DD
+    if (!item || !raw) return;
+    const parts = raw.split("-").map(Number);
+    if (parts.length !== 3) return;
+    const dt = new Date(parts[0], parts[1] - 1, parts[2], 12, 0, 0);
+    if (Number.isNaN(dt.getTime())) return;
+
+    pushHistory();
+    const activeId = item.id;
+    item.timestamp = dt.getTime() / 1000;
+    item.dateStr = `${parts[0]}.${String(parts[1]).padStart(2, "0")}.${String(parts[2]).padStart(2, "0")}`;
+    item.dateSource = "manual";
+
+    const sortMode = $("selSort").value;
+    if (sortMode === "date_asc" || sortMode === "date_desc") {
+      sortItemsList(state.items, sortMode);
+      const newIdx = state.items.findIndex((it) => it.id === activeId);
+      if (newIdx >= 0) state.selectedIndex = newIdx;
+    }
+    renderFilmstrip();
+    renderMainCanvas();
+    renderInspector();
+  });
+
+  // PWA Install Prompt
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    state.deferredInstallPrompt = e;
+    $("btnInstallPwa").classList.remove("hidden");
+  });
+  $("btnInstallPwa").addEventListener("click", async () => {
+    if (!state.deferredInstallPrompt) return;
+    state.deferredInstallPrompt.prompt();
+    await state.deferredInstallPrompt.userChoice;
+    state.deferredInstallPrompt = null;
+    $("btnInstallPwa").classList.add("hidden");
+  });
 
   $("btnSaveProject").addEventListener("click", saveProjectConfig);
   $("projectInput").addEventListener("change", (e) => {
@@ -1609,8 +2093,67 @@ function bindEvents() {
     btn.addEventListener("click", () => updateGlobalSetting({ bgMask: btn.dataset.val }, true))
   );
   document.querySelectorAll("#emojiPickerRow .emoji-btn").forEach((btn) =>
-    btn.addEventListener("click", () => updateGlobalSetting({ selfEmoji: btn.dataset.emoji }, true))
+    btn.addEventListener("click", () => {
+      state.customStickerImg = null;
+      if (state.customStickerUrl) {
+        URL.revokeObjectURL(state.customStickerUrl);
+        state.customStickerUrl = null;
+      }
+      updateGlobalSetting({ selfMask: "emoji", selfEmoji: btn.dataset.emoji }, true);
+    })
   );
+  $("txtCustomSticker").addEventListener("input", (e) => {
+    const val = e.target.value.trim();
+    if (!val) return;
+    state.customStickerImg = null;
+    if (state.customStickerUrl) {
+      URL.revokeObjectURL(state.customStickerUrl);
+      state.customStickerUrl = null;
+    }
+    updateGlobalSetting({ selfMask: "emoji", selfEmoji: val }, false);
+  });
+  $("txtCustomSticker").addEventListener("change", () => state.items.length && renderFilmstrip());
+
+  $("stickerImgInput").addEventListener("change", async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+        img.src = url;
+      });
+      if (state.customStickerUrl) URL.revokeObjectURL(state.customStickerUrl);
+      state.customStickerImg = img;
+      state.customStickerUrl = url;
+      updateGlobalSetting({ selfMask: "emoji" }, true);
+    } catch {
+      showToast("❌ Failed to load sticker image");
+    }
+  });
+
+  $("btnClearStickerImg").addEventListener("click", () => {
+    state.customStickerImg = null;
+    if (state.customStickerUrl) {
+      URL.revokeObjectURL(state.customStickerUrl);
+      state.customStickerUrl = null;
+    }
+    syncSettingsUI();
+    if (state.items.length) {
+      renderMainCanvas();
+      renderFilmstrip();
+    }
+  });
+
+  // Keep preview frame locked to exact target aspect ratio on any window/layout resize
+  const vpWrap = document.querySelector(".viewport-wrap");
+  if (vpWrap && typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(() => fitPreviewFrameToViewport()).observe(vpWrap);
+  }
+  window.addEventListener("resize", fitPreviewFrameToViewport);
   $("rngMaskScale").addEventListener("input", (e) => updateGlobalSetting({ maskScale: parseFloat(e.target.value) }, false));
   $("rngMaskScale").addEventListener("change", () => state.items.length && renderFilmstrip());
 
@@ -1701,6 +2244,7 @@ function bindEvents() {
   $("chkItemEnabled").addEventListener("change", (e) => {
     const item = currentItem();
     if (!item) return;
+    pushHistory();
     item.enabled = e.target.checked;
     refreshBatchColorTarget();
     renderInspector();
@@ -1713,6 +2257,7 @@ function bindEvents() {
   $("btnResetItem").addEventListener("click", () => {
     const item = currentItem();
     if (!item) return;
+    pushHistory();
     item.transform.userDx = 0;
     item.transform.userDy = 0;
     item.transform.userScale = 1;
@@ -1788,6 +2333,17 @@ function bindEvents() {
 
   window.addEventListener("keydown", (e) => {
     if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || !state.items.length) return;
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+      e.preventDefault();
+      if (e.shiftKey) performRedo();
+      else performUndo();
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "y") {
+      e.preventDefault();
+      performRedo();
+      return;
+    }
     if (e.key === "ArrowLeft") { e.preventDefault(); stopPlay(); selectIndex(state.selectedIndex - 1); }
     else if (e.key === "ArrowRight") { e.preventDefault(); stopPlay(); selectIndex(state.selectedIndex + 1); }
     else if (e.key === " ") { e.preventDefault(); togglePlay(); }
@@ -1797,6 +2353,7 @@ function bindEvents() {
     else if (e.key.toLowerCase() === "x") {
       const item = currentItem();
       if (item) {
+        pushHistory();
         item.enabled = !item.enabled;
         refreshBatchColorTarget();
         renderInspector();
@@ -1807,6 +2364,13 @@ function bindEvents() {
   });
 
   bindPreviewInteractions();
+}
+
+// Register Offline-First PWA Service Worker
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js").catch(() => {});
+  });
 }
 
 bindEvents();

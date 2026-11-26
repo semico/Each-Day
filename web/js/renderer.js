@@ -12,12 +12,14 @@ import { getColorAdjustedCanvas } from "./color.js";
  */
 
 export function getCanvasSize(settings) {
-  const baseW = settings.resolution === "1080p" ? 1080 : 720;
+  const base = settings.resolution === "1080p" ? 1080 : 720;
   const map = {
-    "9:16": [baseW, Math.round((baseW * 16) / 9 / 2) * 2],
-    "3:4": [baseW, Math.round((baseW * 4) / 3 / 2) * 2],
-    "4:5": [baseW, Math.round((baseW * 5) / 4 / 2) * 2],
-    "1:1": [baseW, baseW],
+    "9:16": [base, Math.round((base * 16) / 9 / 2) * 2],
+    "3:4": [base, Math.round((base * 4) / 3 / 2) * 2],
+    "4:5": [base, Math.round((base * 5) / 4 / 2) * 2],
+    "1:1": [base, base],
+    "4:3": [Math.round((base * 4) / 3 / 2) * 2, base],
+    "16:9": [Math.round((base * 16) / 9 / 2) * 2, base],
   };
   return map[settings.aspectRatio] || map["9:16"];
 }
@@ -53,10 +55,16 @@ export function getCanonicalTarget(cw, ch, settings) {
   const aspect = cw / ch;
   let neckYRatio = 0.295;
   let torsoRatio = 0.245;
-  if (aspect >= 0.85) {
+  if (aspect > 1.05) {
+    // Landscape (4:3, 16:9)
+    neckYRatio = 0.27;
+    torsoRatio = 0.34;
+  } else if (aspect >= 0.85) {
+    // Square (1:1)
     neckYRatio = 0.28;
     torsoRatio = 0.33;
   } else if (aspect >= 0.65) {
+    // 3:4 or 4:5
     neckYRatio = 0.285;
     torsoRatio = 0.285;
   }
@@ -144,7 +152,8 @@ function drawRoundedRectPath(ctx, x, y, w, h, r) {
 
 function drawWatermark(ctx, cw, ch, text, position) {
   if (!text) return;
-  const fontSize = Math.max(13, Math.round(cw * 0.036));
+  const shortSide = Math.min(cw, ch);
+  const fontSize = Math.max(13, Math.round(shortSide * 0.036));
   ctx.save();
   ctx.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Helvetica Neue", sans-serif`;
   ctx.textBaseline = "middle";
@@ -155,8 +164,8 @@ function drawWatermark(ctx, cw, ch, text, position) {
   const padY = Math.round(fontSize * 0.44);
   const pillW = Math.round(tw + padX * 2);
   const pillH = Math.round(fontSize * 1.15 + padY * 2);
-  const marginX = Math.round(cw * 0.048);
-  const marginY = Math.round(ch * 0.045);
+  const marginX = Math.round(shortSide * 0.048);
+  const marginY = Math.round(shortSide * 0.048);
 
   let px = marginX;
   let py = ch - marginY - pillH;
@@ -299,7 +308,12 @@ function applyOvalBlurOrMosaic(targetCanvas, cx, cy, rx, ry, mode) {
   ctx.restore();
 }
 
-function applyPrivacyMasks(targetCanvas, item, settings, dstCx, dstCy, totalScale, rotRad) {
+function isLikelyTextBadge(str) {
+  // Pure ASCII alphanumeric or Chinese/Japanese/Korean text (not a single emoji glyph)
+  return /[A-Za-z0-9\u4e00-\u9fff]/.test(str);
+}
+
+function applyPrivacyMasks(targetCanvas, item, settings, dstCx, dstCy, totalScale, rotRad, customStickerImg = null) {
   const selfMask = settings.selfMask || "none";
   const bgMask = settings.bgMask || "none";
   if (selfMask === "none" && bgMask === "none") return;
@@ -326,15 +340,46 @@ function applyPrivacyMasks(targetCanvas, item, settings, dstCx, dstCy, totalScal
     }
 
     if (mode === "emoji") {
-      const emoji = settings.selfEmoji || "😎";
-      const size = Math.max(16, Math.max(dw, dh) * 1.08);
-      ctx.save();
-      ctx.translate(pos.x, pos.y);
-      ctx.font = `${Math.round(size)}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(emoji, 0, size * 0.04);
-      ctx.restore();
+      if (isSelf && customStickerImg && customStickerImg.width > 0 && customStickerImg.height > 0) {
+        // Draw uploaded custom image sticker preserving its natural aspect ratio
+        const targetSize = Math.max(20, Math.max(dw, dh) * 1.18);
+        const imgAspect = customStickerImg.width / customStickerImg.height;
+        const drawW = imgAspect >= 1 ? targetSize : targetSize * imgAspect;
+        const drawH = imgAspect >= 1 ? targetSize / imgAspect : targetSize;
+        ctx.save();
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(customStickerImg, pos.x - drawW * 0.5, pos.y - drawH * 0.5, drawW, drawH);
+        ctx.restore();
+      } else {
+        const stickerText = (settings.selfEmoji || "😎").trim() || "😎";
+        ctx.save();
+        ctx.translate(pos.x, pos.y);
+        if (isLikelyTextBadge(stickerText)) {
+          // Render typed text as a clean bold badge covering the face
+          const boxW = Math.max(26, dw * 1.15);
+          const boxH = Math.max(22, dh * 0.72);
+          const fontSize = Math.max(12, Math.min(boxH * 0.62, (boxW * 0.85) / Math.max(1, stickerText.length * 0.65)));
+          drawRoundedRectPath(ctx, -boxW * 0.5, -boxH * 0.5, boxW, boxH, boxH * 0.45);
+          ctx.fillStyle = "rgba(15, 20, 30, 0.92)";
+          ctx.fill();
+          ctx.lineWidth = Math.max(1.5, boxH * 0.05);
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+          ctx.stroke();
+          ctx.font = `700 ${Math.round(fontSize)}px -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillStyle = "#ffffff";
+          ctx.fillText(stickerText, 0, 1);
+        } else {
+          const size = Math.max(16, Math.max(dw, dh) * 1.08);
+          ctx.font = `${Math.round(size)}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(stickerText, 0, size * 0.04);
+        }
+        ctx.restore();
+      }
     } else if (mode === "blur" || mode === "mosaic") {
       applyOvalBlurOrMosaic(targetCanvas, pos.x, pos.y, dw * 0.56, dh * 0.62, mode);
     }
@@ -457,6 +502,7 @@ export function renderAlignedToCanvas(
     lang = "zh",
     batchColorTarget = null,
     progressRatio = null,
+    customStickerImg = null,
   } = {}
 ) {
   const cw = targetCanvas.width;
@@ -505,7 +551,7 @@ export function renderAlignedToCanvas(
   }
 
   // Apply automatic privacy face masks / stickers before watermark
-  applyPrivacyMasks(targetCanvas, item, settings, dstCx, dstCy, totalScale, rotRad);
+  applyPrivacyMasks(targetCanvas, item, settings, dstCx, dstCy, totalScale, rotRad, customStickerImg);
 
   if (settings.showWatermark) {
     const text = formatWatermark(item, seqIndex, firstTimestamp, settings, lang);
@@ -533,10 +579,11 @@ export function renderComparisonCanvas(
   firstTs,
   settings,
   lang = "zh",
-  batchColorTarget = null
+  batchColorTarget = null,
+  customStickerImg = null
 ) {
   const [panelW, panelH] = getCanvasSize({ ...settings, resolution: "720p" });
-  const gap = Math.max(8, Math.round(panelW * 0.014));
+  const gap = Math.max(8, Math.round(Math.min(panelW, panelH) * 0.014));
   const out = document.createElement("canvas");
   out.width = panelW * 2 + gap;
   out.height = panelH;
@@ -556,6 +603,7 @@ export function renderComparisonCanvas(
     drawGuides: false,
     lang,
     batchColorTarget,
+    customStickerImg,
   });
 
   const rightCanvas = document.createElement("canvas");
@@ -567,6 +615,7 @@ export function renderComparisonCanvas(
     drawGuides: false,
     lang,
     batchColorTarget,
+    customStickerImg,
   });
 
   ctx.drawImage(leftCanvas, 0, 0);
@@ -604,6 +653,128 @@ export function renderComparisonCanvas(
 
   ctx.fillStyle = "#ffffff";
   ctx.fillText(badgeText, bx + padX, by + bh * 0.52);
+  ctx.restore();
+
+  return out;
+}
+
+/**
+ * Render a gallery-style Progress Grid Collage Poster PNG (2x2, 3x2, 3x3, or 4x3)
+ * evenly sampling enabled photos from Day 1 to Latest Day.
+ */
+export function renderGridPosterCanvas(
+  enabledItems,
+  settings,
+  { gridCount = 9, title = "EachDay Progress", lang = "zh", batchColorTarget = null, customStickerImg = null } = {}
+) {
+  const total = enabledItems.length;
+  const targetN = Math.min(total, gridCount);
+  const layouts = {
+    4: [2, 2],
+    6: [3, 2],
+    9: [3, 3],
+    12: [4, 3],
+  };
+  let [cols, rows] = layouts[gridCount] || [3, 3];
+  if (targetN < cols * rows) {
+    cols = Math.min(cols, targetN);
+    rows = Math.ceil(targetN / cols);
+  }
+
+  // Evenly pick targetN indices including first and last
+  const chosenIndices = [];
+  if (targetN === 1) {
+    chosenIndices.push(0);
+  } else {
+    for (let i = 0; i < targetN; i++) {
+      const idx = Math.round((i * (total - 1)) / (targetN - 1));
+      chosenIndices.push(idx);
+    }
+  }
+
+  const [arW, arH] = settings.aspectRatio.split(":").map(Number);
+  const cellW = Math.round(1440 / cols);
+  const cellH = Math.round((cellW * arH) / arW);
+  const pad = 28;
+  const gap = 16;
+  const headerH = 116;
+  const footerH = 44;
+
+  const out = document.createElement("canvas");
+  out.width = pad * 2 + cols * cellW + (cols - 1) * gap;
+  out.height = headerH + rows * cellH + (rows - 1) * gap + footerH;
+  const ctx = out.getContext("2d");
+
+  // Sleek dark editorial background
+  const bgGrad = ctx.createLinearGradient(0, 0, 0, out.height);
+  bgGrad.addColorStop(0, "#10141e");
+  bgGrad.addColorStop(1, "#090b10");
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(0, 0, out.width, out.height);
+
+  // Header Title & Date Span Subtitle
+  const first = enabledItems[0];
+  const last = enabledItems[total - 1];
+  const spanDays = Math.max(1, Math.round(Math.abs(last.timestamp - first.timestamp) / 86400) + 1);
+  const subtitle =
+    lang === "en"
+      ? `${first.dateStr}  →  ${last.dateStr}  ·  ${total} Check-ins (${spanDays} Days)`
+      : `${first.dateStr}  →  ${last.dateStr}  ·  共 ${total} 次记录（跨度 ${spanDays} 天）`;
+
+  ctx.save();
+  ctx.fillStyle = "#f8fafc";
+  ctx.font = `800 36px -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText((title || "EachDay").trim(), out.width * 0.5, 44);
+
+  ctx.fillStyle = "#94a3b8";
+  ctx.font = `500 18px -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif`;
+  ctx.fillText(subtitle, out.width * 0.5, 84);
+  ctx.restore();
+
+  const cellCanvas = document.createElement("canvas");
+  cellCanvas.width = cellW;
+  cellCanvas.height = cellH;
+  const cellSettings = { ...settings, showProgressBar: false };
+
+  chosenIndices.forEach((itemIdx, pos) => {
+    const r = Math.floor(pos / cols);
+    const c = pos % cols;
+    const x = pad + c * (cellW + gap);
+    const y = headerH + r * (cellH + gap);
+
+    renderAlignedToCanvas(cellCanvas, enabledItems[itemIdx], cellSettings, {
+      seqIndex: itemIdx + 1,
+      totalEnabled: total,
+      firstTimestamp: first.timestamp,
+      drawGuides: false,
+      lang,
+      batchColorTarget,
+      customStickerImg,
+    });
+
+    ctx.save();
+    drawRoundedRectPath(ctx, x, y, cellW, cellH, 14);
+    ctx.clip();
+    ctx.drawImage(cellCanvas, x, y);
+    ctx.restore();
+
+    ctx.save();
+    drawRoundedRectPath(ctx, x, y, cellW, cellH, 14);
+    ctx.strokeStyle = "rgba(255,255,255,0.12)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.restore();
+  });
+
+  // Subtle footer credit
+  ctx.save();
+  ctx.fillStyle = "rgba(148, 163, 184, 0.55)";
+  ctx.font = `500 14px -apple-system, BlinkMacSystemFont, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("Made locally with EachDay · Zero Upload", out.width * 0.5, out.height - footerH * 0.5);
   ctx.restore();
 
   return out;

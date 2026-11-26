@@ -34,18 +34,17 @@ Documenting **gym progress, daily selfies ("Photo a Day"), baby growth, OOTD out
   - **🎯 2-Point Precision Mode** — Click any two reference points (`A → B`) for exact geometric alignment of rooms, renovations, or art.
   - **Cross-Photo Subject Lock**: In Body, Face, or Object mode, click any subject in one photo and hit **Auto-Track Across All Photos** to lock onto that exact person/pet/object across the entire sequence.
 - **One-Click Automatic Face Privacy Mask & Stickers**  
-  Auto-tracks faces across every frame to apply clean emoji stickers (`😎`, `🙂`, `🐱`, `🐻`, `🤖`, `✨`, `🏋️`), smooth blur, or pixelation to **your own face** and/or **background bystanders**—ready to share safely on social media.
+  Auto-tracks faces across every frame to apply 14 built-in emoji stickers, **any custom typed emoji/text badge**, **any uploaded image/PNG sticker**, smooth blur, or pixelation to **your own face** and/or **background bystanders**—ready to share safely on social media.
 - **One-Click Auto Exposure & Color Consistency Match**  
-  Normalizes brightness and white balance across photos taken under different lighting conditions (soft highlight roll-off, adjustable strength) so timelapses stay cinematic and flicker-free.
-- **Custom Labels, Progress Bar, Milestone Stars & Before/After Card**  
-  Supports EXIF chronological sorting (`JPG`, `PNG`, `WEBP`, iPhone `HEIC/HEIF`), custom watermark prefixes (e.g. `Day 01`, `OOTD #12`, `Baby Day 90`), animated top/bottom timeline progress bar, drag-to-reorder filmstrip, starred milestone frames (`M`) that hold longer, and **1-click high-res Before/After side-by-side PNG export**.
-- **Save & Resume Project Config (`.eachday.json`)**  
-  Export a lightweight JSON project file containing your settings, per-frame tweaks, 2-point anchors, custom order, and milestone stars (zero photo pixels), then reload it anytime when you add new progress photos.
-- **Natural Gaussian Blur Edge Fill**  
-  Blends a softly feathered Gaussian-blurred background whenever cropping/zooming exposes edges outside the original frame (with optional `black` or `edge` modes).
-- **Interactive Local Studio & Zero-Setup MP4 Export**  
-  - **Onion-skin overlay** (`O`), **mode-specific alignment guides** (`G`), **live playback preview** (`Space`), **1-click subject switching**, and drag/scroll fine-tuning
-  - Exports universally playable H.264 MP4 (`9:16`, `3:4`, `4:5`, `1:1`; `1080p`/`720p`; configurable FPS, final-frame hold & crossfade)
+  Normalizes brightness and white balance across photos taken under different lighting conditions—matching either the **Batch Median** or **any chosen Reference Photo**—with soft highlight roll-off and adjustable strength.
+- **Rich Local Export Formats (MP4 + GIF + Wipe Video + Grid Poster)**  
+  - **H.264 MP4 Timelapse** (`9:16`, `3:4`, `4:5`, `1:1`, **`4:3`**, **`16:9`**; `1080p`/`720p`) with optional **Local BGM Audio (`MP3/M4A/WAV`) & BPM Beat-Sync** muxed straight into the MP4
+  - **Animated GIF Export** (pure in-browser quantized GIF, ready for GitHub, WeChat, Discord & Notion)
+  - **Before / After Side-by-Side PNG & Animated Curtain Wipe MP4**
+  - **Progress Grid Collage Poster PNG** (`2×2`, `3×2`, `3×3`, `4×3` gallery layout with custom title & date span)
+- **Built for Everyday Polish & Offline Use (PWA)**  
+  - Offline-first **EXIF capture date reader** (JPEG / iPhone HEIC / PNG / WebP) + **manual date editor**, **Undo/Redo** (`Cmd/Ctrl+Z`), drag-to-reorder filmstrip, starred milestone frames (`M`), and **`.eachday.json`** project save/resume
+  - **1-Click Sample Demo** for instant zero-setup tryout + **Installable Offline PWA** (add to desktop/home screen and run completely offline)
   - Optional local Python desktop version also supports direct **macOS Photos app album** import and headless CLI batch export.
 
 ## Installation
