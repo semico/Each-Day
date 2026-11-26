@@ -16,6 +16,60 @@ function loadGifenc() {
   return gifencPromise;
 }
 
+let mediabunnyPromise = null;
+async function loadMediabunnyWithWasmAac() {
+  if (!mediabunnyPromise) {
+    mediabunnyPromise = (async () => {
+      const [mb, aacExt] = await Promise.all([
+        import("https://cdn.jsdelivr.net/npm/mediabunny/+esm"),
+        import("https://cdn.jsdelivr.net/npm/@mediabunny/aac-encoder/+esm"),
+      ]);
+      if (typeof aacExt.registerAacEncoder === "function") {
+        aacExt.registerAacEncoder();
+      }
+      // Guard against CDN peer-dependency module skew: if AAC still reports unsupported,
+      // load both packages bound to the exact same mediabunny module via esm.sh ?deps=
+      if (typeof mb.canEncodeAudio === "function" && !(await mb.canEncodeAudio("aac"))) {
+        const [mb2, aacExt2] = await Promise.all([
+          import("https://esm.sh/mediabunny@1.66.4"),
+          import("https://esm.sh/@mediabunny/aac-encoder?deps=mediabunny@1.66.4"),
+        ]);
+        if (typeof aacExt2.registerAacEncoder === "function") {
+          aacExt2.registerAacEncoder();
+        }
+        return mb2;
+      }
+      return mb;
+    })();
+  }
+  return mediabunnyPromise;
+}
+
+async function renderBgmToAudioBuffer(audioBuffer, durationSec, volume = 0.8, startOffsetSec = 0, sampleRate = 48000) {
+  const numChannels = 2;
+  const totalSamples = Math.max(1024, Math.ceil(durationSec * sampleRate));
+  const offline = new OfflineAudioContext(numChannels, totalSamples, sampleRate);
+  const src = offline.createBufferSource();
+  src.buffer = audioBuffer;
+  const maxOffset = Math.max(0, audioBuffer.duration - 0.15);
+  const offset = Math.max(0, Math.min(maxOffset, Number(startOffsetSec) || 0));
+  src.loop = true;
+  src.loopStart = offset;
+  src.loopEnd = audioBuffer.duration;
+
+  const gain = offline.createGain();
+  const vol = Math.max(0.01, Math.min(1, Number(volume) || 0.8));
+  gain.gain.setValueAtTime(vol, 0);
+  const fadeDur = Math.min(0.65, durationSec * 0.25);
+  gain.gain.setValueAtTime(vol, Math.max(0, durationSec - fadeDur));
+  gain.gain.linearRampToValueAtTime(0.0001, durationSec);
+
+  src.connect(gain);
+  gain.connect(offline.destination);
+  src.start(0, offset);
+  return offline.startRendering();
+}
+
 async function pickH264Config(width, height, bitrate, framerate) {
   if (typeof VideoEncoder === "undefined" || typeof VideoFrame === "undefined") {
     return null;
@@ -37,6 +91,10 @@ async function pickAudioEncoderConfig() {
   if (typeof AudioEncoder === "undefined" || typeof AudioData === "undefined") {
     return null;
   }
+  // IMPORTANT: Only accept universal AAC-LC (mp4a.40.2) for MP4 containers!
+  // Never mux Opus into MP4 here: Safari 18+/27 & Firefox report WebCodecs Opus as supported,
+  // but Apple Safari <video>, QuickTime Player, and iOS silently refuse to play Opus inside MP4.
+  // Returning null when native AAC is unavailable cleanly routes to our WASM AAC-LC encoder!
   const candidates = [
     {
       muxerCodec: "aac",
@@ -49,10 +107,6 @@ async function pickAudioEncoderConfig() {
     {
       muxerCodec: "aac",
       config: { codec: "mp4a.40.2", sampleRate: 48000, numberOfChannels: 2, bitrate: 128_000 },
-    },
-    {
-      muxerCodec: "opus",
-      config: { codec: "opus", sampleRate: 48000, numberOfChannels: 2, bitrate: 128_000 },
     },
   ];
   for (const item of candidates) {
@@ -68,6 +122,12 @@ async function pickAudioEncoderConfig() {
   return null;
 }
 
+function isSafariBrowser() {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  return /safari/i.test(ua) && !/chrome|chromium|crios|edg|opr|fxios|android/i.test(ua);
+}
+
 /**
  * Render an AudioBuffer (starting at `startOffsetSec`, looped/trimmed to `durationSec`,
  * resampled to target sampleRate stereo with 0.65s fade-out) and feed it through WebCodecs AudioEncoder.
@@ -75,30 +135,7 @@ async function pickAudioEncoderConfig() {
 async function encodeBgmAudioTrack(muxer, audioSpec, audioBuffer, durationSec, volume = 0.8, startOffsetSec = 0) {
   if (!audioSpec || !audioBuffer || durationSec <= 0.1) return { ok: false, chunks: 0, error: "no_audio" };
   const sampleRate = audioSpec.config.sampleRate || 48000;
-  const numChannels = audioSpec.config.numberOfChannels || 2;
-
-  const totalSamples = Math.ceil(durationSec * sampleRate);
-  const offline = new OfflineAudioContext(numChannels, totalSamples, sampleRate);
-  const src = offline.createBufferSource();
-  src.buffer = audioBuffer;
-  const maxOffset = Math.max(0, audioBuffer.duration - 0.15);
-  const offset = Math.max(0, Math.min(maxOffset, Number(startOffsetSec) || 0));
-  src.loop = true;
-  src.loopStart = offset;
-  src.loopEnd = audioBuffer.duration;
-
-  const gain = offline.createGain();
-  const vol = Math.max(0.01, Math.min(1, Number(volume) || 0.8));
-  gain.gain.setValueAtTime(vol, 0);
-  const fadeDur = Math.min(0.65, durationSec * 0.25);
-  gain.gain.setValueAtTime(vol, Math.max(0, durationSec - fadeDur));
-  gain.gain.linearRampToValueAtTime(0.0001, durationSec);
-
-  src.connect(gain);
-  gain.connect(offline.destination);
-  src.start(0, offset);
-
-  const rendered = await offline.startRendering();
+  const rendered = await renderBgmToAudioBuffer(audioBuffer, durationSec, volume, startOffsetSec, sampleRate);
   const ch0 = rendered.getChannelData(0);
   const ch1 = rendered.numberOfChannels > 1 ? rendered.getChannelData(1) : ch0;
 
@@ -333,6 +370,7 @@ async function exportWithWebCodecs(
     ext: "mp4",
     audioIncluded,
     audioCodec,
+    engine: "webcodecs",
   };
 }
 
@@ -349,71 +387,9 @@ async function exportWithMediaRecorder(
   const width = rawW - (rawW % 2);
   const height = rawH - (rawH % 2);
   const canvas = makeCanvas(width, height);
-  const videoStream = canvas.captureStream(30);
-
-  let combinedStream = videoStream;
-  let audioCtx = null;
-  let audioSrc = null;
-  let audioIncluded = false;
-
-  const hasBgm = !!(audioOptions && audioOptions.audioBuffer);
-  if (hasBgm && typeof (window.AudioContext || window.webkitAudioContext) !== "undefined") {
-    try {
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      audioCtx = new Ctx();
-      if (audioCtx.state === "suspended") await audioCtx.resume();
-      const dest = audioCtx.createMediaStreamDestination();
-      audioSrc = audioCtx.createBufferSource();
-      audioSrc.buffer = audioOptions.audioBuffer;
-      const maxOff = Math.max(0, audioOptions.audioBuffer.duration - 0.15);
-      const offset = Math.max(0, Math.min(maxOff, Number(audioOptions.startOffsetSec) || 0));
-      audioSrc.loop = true;
-      audioSrc.loopStart = offset;
-      audioSrc.loopEnd = audioOptions.audioBuffer.duration;
-      const gain = audioCtx.createGain();
-      gain.gain.value = Math.max(0.01, Math.min(1, Number(audioOptions.volume) || 0.8));
-      audioSrc.connect(gain);
-      gain.connect(dest);
-      combinedStream = new MediaStream([...videoStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
-      audioSrc.start(0, offset);
-      audioIncluded = true;
-    } catch (err) {
-      console.warn("MediaRecorder audio mix unavailable:", err);
-    }
-  }
-
-  const mimeCandidates = [
-    "video/mp4;codecs=avc1,mp4a.40.2",
-    "video/mp4;codecs=avc1",
-    "video/webm;codecs=vp9,opus",
-    "video/webm;codecs=vp8,opus",
-    "video/webm",
-  ];
-  const mimeType = mimeCandidates.find((m) => window.MediaRecorder?.isTypeSupported(m)) || "";
-  const recorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, videoBitsPerSecond: 6_000_000 } : undefined);
-
-  const chunks = [];
-  recorder.ondataavailable = (e) => {
-    if (e.data && e.data.size > 0) chunks.push(e.data);
-  };
-
-  const done = new Promise((resolve) => {
-    recorder.onstop = () => {
-      if (audioSrc) {
-        try { audioSrc.stop(); } catch {}
-      }
-      if (audioCtx) {
-        try { audioCtx.close(); } catch {}
-      }
-      const isMp4 = (mimeType || "").includes("mp4");
-      resolve({
-        blob: new Blob(chunks, { type: isMp4 ? "video/mp4" : "video/webm" }),
-        ext: isMp4 ? "mp4" : "webm",
-        audioIncluded,
-        audioCodec: audioIncluded ? (isMp4 ? "aac" : "opus") : null,
-      });
-    };
-  });
+  // Mount offscreen in DOM during MediaRecorder capture so Safari's compositor reliably flushes frames
+  canvas.style.cssText = "position:fixed;left:-9999px;top:-9999px;width:2px;height:2px;opacity:0.01;pointer-events:none;";
+  document.body.appendChild(canvas);
 
   const firstTs = enabledItems[0].timestamp;
   const totalEnabled = enabledItems.length;
@@ -425,7 +401,176 @@ async function exportWithMediaRecorder(
       ? audioOptions.photoDurationsSec
       : null;
 
-  recorder.start();
+  // Compute total recording duration for clean fade-out
+  let totalMs = holdMs;
+  for (let i = 0; i < totalEnabled; i++) {
+    totalMs += customDurations
+      ? Math.max(60, Math.round(customDurations[i] * 1000))
+      : msPerPhoto + (enabledItems[i].milestone ? milestoneMs : 0);
+  }
+  const totalDurationSec = Math.max(0.2, totalMs / 1000);
+
+  // Draw frame 0 BEFORE captureStream so Safari initializes video track dimensions immediately
+  renderAlignedToCanvas(canvas, enabledItems[0], settings, {
+    seqIndex: 1,
+    totalEnabled,
+    firstTimestamp: firstTs,
+    drawGuides: false,
+    lang,
+    batchColorTarget,
+    progressRatio: 1 / totalEnabled,
+    customStickerImg,
+  });
+
+  const videoStream = canvas.captureStream(30);
+  let combinedStream = videoStream;
+  let audioCtx = null;
+  let ownsAudioCtx = false;
+  let audioSrc = null;
+  let keepAliveOsc = null;
+  let silentTap = null;
+  let masterGain = null;
+  let audioIncluded = false;
+
+  const hasBgm = !!(audioOptions && audioOptions.audioBuffer);
+  if (hasBgm && typeof (window.AudioContext || window.webkitAudioContext) !== "undefined") {
+    try {
+      // Reuse the already gesture-unlocked AudioContext from LocalAudioManager (critical for Safari!)
+      if (audioOptions.audioCtx && audioOptions.audioCtx.state !== "closed") {
+        audioCtx = audioOptions.audioCtx;
+      } else {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new Ctx();
+        ownsAudioCtx = true;
+      }
+      if (audioCtx.state === "suspended") {
+        await audioCtx.resume();
+      }
+
+      const dest = audioCtx.createMediaStreamDestination();
+      masterGain = audioCtx.createGain();
+      const vol = Math.max(0.01, Math.min(1, Number(audioOptions.volume) || 0.8));
+      const now = audioCtx.currentTime;
+      masterGain.gain.setValueAtTime(vol, now);
+      const fadeDur = Math.min(0.65, totalDurationSec * 0.25);
+      masterGain.gain.setValueAtTime(vol, now + Math.max(0, totalDurationSec - fadeDur));
+      masterGain.gain.linearRampToValueAtTime(0.0001, now + totalDurationSec);
+      masterGain.connect(dest);
+
+      // Safari WebKit quirk #1: Keep-alive sub-audible tone prevents AVAssetWriter from dropping
+      // the audio track during quiet intros or pauses.
+      keepAliveOsc = audioCtx.createOscillator();
+      const keepGain = audioCtx.createGain();
+      keepGain.gain.value = 0.00005;
+      keepAliveOsc.connect(keepGain);
+      keepGain.connect(dest);
+      keepAliveOsc.start(now);
+
+      // Safari WebKit quirk #2: Connecting a near-zero tap to audioCtx.destination ensures
+      // CoreAudio's render thread actively pumps audio frames into MediaStreamAudioDestinationNode!
+      silentTap = audioCtx.createGain();
+      silentTap.gain.value = 0.00001;
+      masterGain.connect(silentTap);
+      silentTap.connect(audioCtx.destination);
+
+      audioSrc = audioCtx.createBufferSource();
+      audioSrc.buffer = audioOptions.audioBuffer;
+      const maxOff = Math.max(0, audioOptions.audioBuffer.duration - 0.15);
+      const offset = Math.max(0, Math.min(maxOff, Number(audioOptions.startOffsetSec) || 0));
+      audioSrc.loop = true;
+      audioSrc.loopStart = offset;
+      audioSrc.loopEnd = audioOptions.audioBuffer.duration;
+      audioSrc.connect(masterGain);
+
+      combinedStream = new MediaStream([...videoStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+      audioSrc.start(now, offset);
+      audioIncluded = true;
+      // Give WebKit 60ms so audio track is actively producing samples when MediaRecorder starts
+      await new Promise((r) => setTimeout(r, 60));
+    } catch (err) {
+      console.warn("MediaRecorder audio mix unavailable:", err);
+    }
+  }
+
+  // IMPORTANT for Safari: NEVER pass a video-only MIME string like "video/mp4;codecs=avc1"
+  // when recording audio, because Safari will omit the AAC audio track!
+  const mimeCandidates = audioIncluded
+    ? [
+        "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+        "video/mp4;codecs=avc1,mp4a.40.2",
+        "video/mp4",
+        "video/webm;codecs=vp9,opus",
+        "video/webm;codecs=vp8,opus",
+        "video/webm",
+      ]
+    : ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
+
+  const mimeType = mimeCandidates.find((m) => window.MediaRecorder?.isTypeSupported(m)) || "";
+  const recOpts = mimeType ? { mimeType, videoBitsPerSecond: 6_000_000 } : { videoBitsPerSecond: 6_000_000 };
+  let recorder;
+  try {
+    recorder = new MediaRecorder(combinedStream, recOpts);
+  } catch {
+    recorder = new MediaRecorder(combinedStream);
+  }
+
+  const chunks = [];
+  recorder.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) chunks.push(e.data);
+  };
+
+  const done = new Promise((resolve) => {
+    recorder.onstop = () => {
+      if (audioSrc) {
+        try { audioSrc.stop(); audioSrc.disconnect(); } catch {}
+      }
+      if (keepAliveOsc) {
+        try { keepAliveOsc.stop(); keepAliveOsc.disconnect(); } catch {}
+      }
+      if (masterGain) {
+        try { masterGain.disconnect(); } catch {}
+      }
+      if (silentTap) {
+        try { silentTap.disconnect(); } catch {}
+      }
+      if (audioCtx && ownsAudioCtx) {
+        try { audioCtx.close(); } catch {}
+      }
+      if (canvas.parentNode) {
+        try { canvas.parentNode.removeChild(canvas); } catch {}
+      }
+      const actualMime = recorder.mimeType || mimeType || "video/mp4";
+      const isMp4 = actualMime.includes("mp4");
+      resolve({
+        blob: new Blob(chunks, { type: isMp4 ? "video/mp4" : "video/webm" }),
+        ext: isMp4 ? "mp4" : "webm",
+        audioIncluded,
+        audioCodec: audioIncluded ? (isMp4 ? "aac" : "opus") : null,
+        engine: "mediarecorder",
+      });
+    };
+  });
+
+  // Helper to wait while keeping canvas frames flowing for Safari's captureStream
+  const waitWithFrameKeepAlive = async (waitMs) => {
+    const endAt = performance.now() + waitMs;
+    const ctx = canvas.getContext("2d");
+    while (performance.now() < endAt) {
+      const rem = endAt - performance.now();
+      await new Promise((r) => setTimeout(r, Math.min(65, Math.max(10, rem))));
+      // Re-stamp a 1px corner touch? No—re-draw image onto itself keeps Safari frame pump alive cleanly
+      if (performance.now() < endAt) {
+        ctx.save();
+        ctx.globalAlpha = 0.001;
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(0, 0, 1, 1);
+        ctx.restore();
+      }
+    }
+  };
+
+  // Use 250ms timeslice so Safari flushes interleaved audio+video chunks reliably
+  recorder.start(250);
   for (let i = 0; i < totalEnabled; i++) {
     const item = enabledItems[i];
     if (onProgress) onProgress(i + 1, totalEnabled, "encoding");
@@ -442,11 +587,168 @@ async function exportWithMediaRecorder(
     const waitMs = customDurations
       ? Math.max(60, Math.round(customDurations[i] * 1000))
       : msPerPhoto + (item.milestone ? milestoneMs : 0);
-    await new Promise((r) => setTimeout(r, waitMs));
+    await waitWithFrameKeepAlive(waitMs);
   }
-  if (holdMs > 0) await new Promise((r) => setTimeout(r, holdMs));
+  if (holdMs > 0) await waitWithFrameKeepAlive(holdMs);
   recorder.stop();
   return done;
+}
+
+/**
+ * Offline H.264 + WASM AAC-LC MP4 Exporter via Mediabunny + @mediabunny/aac-encoder.
+ * Solves Safari (macOS & iOS) and Firefox where WebCodecs lacks native AAC AudioEncoder
+ * and MediaRecorder drops Web Audio tracks! Runs 100% locally in-browser, faster than realtime.
+ */
+async function exportWithMediabunnyWasmAac(
+  enabledItems,
+  settings,
+  lang,
+  batchColorTarget,
+  customStickerImg,
+  audioOptions,
+  onProgress
+) {
+  const [rawW, rawH] = getCanvasSize(settings);
+  const width = rawW - (rawW % 2);
+  const height = rawH - (rawH % 2);
+  const streamFps = 30;
+  const bitrate = settings.resolution === "1080p" ? 8_000_000 : 4_500_000;
+
+  const encoderConfig = await pickH264Config(width, height, bitrate, streamFps);
+  if (!encoderConfig) return null;
+
+  const mb = await loadMediabunnyWithWasmAac();
+  const { Output, Mp4OutputFormat, BufferTarget, CanvasSource, AudioBufferSource } = mb;
+
+  const photoFps = Math.max(1, Math.min(20, Number(settings.fps) || 6));
+  const defaultFramesPerPhoto = Math.max(1, Math.round(streamFps / photoFps));
+  const milestoneExtraFrames = Math.max(0, Math.round((Number(settings.milestoneHoldSec) || 0.8) * streamFps));
+  const holdExtraFrames = Math.max(0, Math.round((Number(settings.holdLastSec) || 0) * streamFps));
+  const totalEnabled = enabledItems.length;
+  const customDurations =
+    audioOptions && Array.isArray(audioOptions.photoDurationsSec) && audioOptions.photoDurationsSec.length === totalEnabled
+      ? audioOptions.photoDurationsSec
+      : null;
+
+  const drawCanvas = makeCanvas(width, height);
+  const currCanvas = makeCanvas(width, height);
+  const prevCanvas = makeCanvas(width, height);
+
+  const target = new BufferTarget();
+  const output = new Output({
+    format: new Mp4OutputFormat({ fastStart: "in-memory" }),
+    target,
+  });
+
+  const videoSource = new CanvasSource(drawCanvas, {
+    codec: "avc",
+    bitrate,
+  });
+  output.addVideoTrack(videoSource, { frameRate: streamFps });
+
+  const hasBgm = !!(audioOptions && audioOptions.audioBuffer);
+  let audioSource = null;
+  if (hasBgm) {
+    audioSource = new AudioBufferSource({
+      codec: "aac",
+      bitrate: 128_000,
+    });
+    output.addAudioTrack(audioSource);
+  }
+
+  await output.start();
+
+  const firstTs = enabledItems[0].timestamp;
+  const frameDurSec = 1 / streamFps;
+  let frameIndex = 0;
+  let cumEndSec = 0;
+
+  const pushCanvas = async (srcCanvas, repeatCount = 1) => {
+    const drawCtx = drawCanvas.getContext("2d");
+    drawCtx.drawImage(srcCanvas, 0, 0);
+    for (let r = 0; r < repeatCount; r++) {
+      await videoSource.add(frameIndex * frameDurSec, frameDurSec, {
+        keyFrame: frameIndex % (streamFps * 2) === 0,
+      });
+      frameIndex += 1;
+    }
+  };
+
+  for (let i = 0; i < totalEnabled; i++) {
+    const item = enabledItems[i];
+    if (onProgress) onProgress(i + 1, totalEnabled, "encoding");
+
+    renderAlignedToCanvas(currCanvas, item, settings, {
+      seqIndex: i + 1,
+      totalEnabled,
+      firstTimestamp: firstTs,
+      drawGuides: false,
+      lang,
+      batchColorTarget,
+      progressRatio: (i + 1) / totalEnabled,
+      customStickerImg,
+    });
+
+    let targetFramesForPhoto;
+    if (customDurations) {
+      cumEndSec += Math.max(0.06, customDurations[i]);
+      targetFramesForPhoto = Math.max(1, Math.round(cumEndSec * streamFps) - frameIndex);
+    } else {
+      targetFramesForPhoto = defaultFramesPerPhoto + (item.milestone ? milestoneExtraFrames : 0);
+    }
+
+    const blendFrames =
+      settings.crossfade && targetFramesForPhoto >= 3
+        ? Math.max(1, Math.min(Math.floor(targetFramesForPhoto / 2), 4))
+        : 0;
+
+    if (i > 0 && blendFrames > 0) {
+      for (let b = 1; b <= blendFrames; b++) {
+        blendCanvases(drawCanvas, prevCanvas, currCanvas, b / (blendFrames + 1));
+        await videoSource.add(frameIndex * frameDurSec, frameDurSec, {
+          keyFrame: frameIndex % (streamFps * 2) === 0,
+        });
+        frameIndex += 1;
+      }
+      await pushCanvas(currCanvas, Math.max(1, targetFramesForPhoto - blendFrames));
+    } else {
+      await pushCanvas(currCanvas, targetFramesForPhoto);
+    }
+
+    prevCanvas.getContext("2d").drawImage(currCanvas, 0, 0);
+    await new Promise((res) => setTimeout(res, 0));
+  }
+
+  if (holdExtraFrames > 0) {
+    await pushCanvas(currCanvas, holdExtraFrames);
+  }
+  videoSource.close();
+
+  if (onProgress) onProgress(totalEnabled, totalEnabled, "finalizing");
+
+  let audioIncluded = false;
+  if (audioSource && hasBgm) {
+    const totalDurationSec = frameIndex * frameDurSec;
+    const renderedAudio = await renderBgmToAudioBuffer(
+      audioOptions.audioBuffer,
+      totalDurationSec,
+      audioOptions.volume,
+      audioOptions.startOffsetSec || 0,
+      48000
+    );
+    await audioSource.add(renderedAudio);
+    audioSource.close();
+    audioIncluded = true;
+  }
+
+  await output.finalize();
+  return {
+    blob: new Blob([target.buffer], { type: "video/mp4" }),
+    ext: "mp4",
+    audioIncluded,
+    audioCodec: audioIncluded ? "aac" : null,
+    engine: "wasm-aac",
+  };
 }
 
 export async function exportTimelapseLocal(
@@ -461,7 +763,58 @@ export async function exportTimelapseLocal(
   const enabled = items.filter((it) => it.enabled);
   if (!enabled.length) throw new Error("No enabled photos to export.");
 
-  const wc = await exportWithWebCodecs(
+  const forceWasmAac =
+    typeof location !== "undefined" && new URLSearchParams(location.search).get("forceWasmAac") === "1";
+  const hasBgm = !!(audioOptions && audioOptions.audioBuffer);
+  const preferMediabunny = forceWasmAac || (hasBgm && isSafariBrowser());
+
+  // 1. Primary path: Native WebCodecs H.264 + Native WebCodecs AAC (fastest on Chrome/Edge)
+  if (!preferMediabunny) {
+    const wc = await exportWithWebCodecs(
+      enabled,
+      settings,
+      lang,
+      batchColorTarget,
+      customStickerImg,
+      audioOptions,
+      onProgress
+    );
+    if (wc) return wc;
+  }
+
+  // 2. Safari / Firefox path: Native WebCodecs H.264 + Mediabunny WASM AAC-LC encoder (100% offline, zero MediaRecorder quirks!)
+  let wasmErrMsg = "";
+  const origAudioEncoder = globalThis.AudioEncoder;
+  const origAudioData = globalThis.AudioData;
+  const maskNativeAudio = forceWasmAac || isSafariBrowser();
+  try {
+    if (maskNativeAudio) {
+      // Guarantee Mediabunny uses the verified WASM AAC-LC encoder on Safari (bypassing Safari Opus/WebKit quirks!)
+      globalThis.AudioEncoder = undefined;
+      globalThis.AudioData = undefined;
+    }
+    const mbRes = await exportWithMediabunnyWasmAac(
+      enabled,
+      settings,
+      lang,
+      batchColorTarget,
+      customStickerImg,
+      audioOptions,
+      onProgress
+    );
+    if (mbRes) return mbRes;
+  } catch (err) {
+    wasmErrMsg = String(err && err.message ? err.message : err);
+    console.error("Mediabunny WASM AAC fallback failed, trying MediaRecorder:", err);
+  } finally {
+    if (maskNativeAudio) {
+      globalThis.AudioEncoder = origAudioEncoder;
+      globalThis.AudioData = origAudioData;
+    }
+  }
+
+  // 3. Final legacy fallback: MediaRecorder
+  const mrRes = await exportWithMediaRecorder(
     enabled,
     settings,
     lang,
@@ -470,8 +823,8 @@ export async function exportTimelapseLocal(
     audioOptions,
     onProgress
   );
-  if (wc) return wc;
-  return exportWithMediaRecorder(enabled, settings, lang, batchColorTarget, customStickerImg, audioOptions, onProgress);
+  if (wasmErrMsg) mrRes.wasmErrMsg = wasmErrMsg;
+  return mrRes;
 }
 
 /**
@@ -568,7 +921,128 @@ export async function exportWipeVideoLocal(
   }
 
   const hasBgm = !!(audioOptions && audioOptions.audioBuffer);
-  const audioSpec = hasBgm ? await pickAudioEncoderConfig() : null;
+  const audioSpec = hasBgm && !isSafariBrowser() ? await pickAudioEncoderConfig() : null;
+
+  // If Safari/Firefox lacks native AAC AudioEncoder and user added BGM, use Mediabunny WASM AAC for Wipe MP4 too!
+  if (hasBgm && !audioSpec) {
+    const origAE = globalThis.AudioEncoder;
+    const origAD = globalThis.AudioData;
+    try {
+      if (isSafariBrowser()) {
+        globalThis.AudioEncoder = undefined;
+        globalThis.AudioData = undefined;
+      }
+      const mb = await loadMediabunnyWithWasmAac();
+      const { Output, Mp4OutputFormat, BufferTarget, CanvasSource, AudioBufferSource } = mb;
+      const noBarSettings = { ...settings, showProgressBar: false };
+      const leftCanvas = makeCanvas(width, height);
+      const rightCanvas = makeCanvas(width, height);
+      const totalEst = Math.max(leftSeq, rightSeq, 1);
+      renderAlignedToCanvas(leftCanvas, leftItem, noBarSettings, {
+        seqIndex: leftSeq,
+        totalEnabled: totalEst,
+        firstTimestamp: firstTs,
+        drawGuides: false,
+        lang,
+        batchColorTarget,
+        customStickerImg,
+      });
+      renderAlignedToCanvas(rightCanvas, rightItem, noBarSettings, {
+        seqIndex: rightSeq,
+        totalEnabled: totalEst,
+        firstTimestamp: firstTs,
+        drawGuides: false,
+        lang,
+        batchColorTarget,
+        customStickerImg,
+      });
+
+      const frameCanvas = makeCanvas(width, height);
+      const ctx = frameCanvas.getContext("2d");
+      const target = new BufferTarget();
+      const output = new Output({ format: new Mp4OutputFormat({ fastStart: "in-memory" }), target });
+      const videoSource = new CanvasSource(frameCanvas, { codec: "avc", bitrate });
+      output.addVideoTrack(videoSource, { frameRate: streamFps });
+      const audioSource = new AudioBufferSource({ codec: "aac", bitrate: 128_000 });
+      output.addAudioTrack(audioSource);
+      await output.start();
+
+      const totalFrames = 156;
+      const frameDurSec = 1 / streamFps;
+      for (let f = 0; f < totalFrames; f++) {
+        if (f % 10 === 0 && onProgress) onProgress(f + 1, totalFrames, "encoding");
+        let splitRatio;
+        if (f < 15) splitRatio = 0;
+        else if (f < 75) splitRatio = easeInOutCubic((f - 15) / 60);
+        else if (f < 105) splitRatio = 1;
+        else if (f < 135) splitRatio = 1 - 0.5 * easeInOutCubic((f - 105) / 30);
+        else splitRatio = 0.5;
+
+        const cutX = Math.round(width * splitRatio);
+        ctx.drawImage(leftCanvas, 0, 0);
+        if (cutX > 0) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(0, 0, cutX, height);
+          ctx.clip();
+          ctx.drawImage(rightCanvas, 0, 0);
+          ctx.restore();
+        }
+        if (cutX > 2 && cutX < width - 2) {
+          ctx.save();
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.92)";
+          ctx.lineWidth = Math.max(3, Math.round(width * 0.004));
+          ctx.shadowColor = "rgba(0, 0, 0, 0.55)";
+          ctx.shadowBlur = 10;
+          ctx.beginPath();
+          ctx.moveTo(cutX, 0);
+          ctx.lineTo(cutX, height);
+          ctx.stroke();
+          const hr = Math.max(16, Math.round(Math.min(width, height) * 0.028));
+          ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+          ctx.beginPath();
+          ctx.arc(cutX, height * 0.5, hr, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = "#ffffff";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.fillStyle = "#ffffff";
+          ctx.font = `700 ${Math.round(hr * 0.85)}px -apple-system, sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("⇆", cutX, height * 0.5 + 1);
+          ctx.restore();
+        }
+        await videoSource.add(f * frameDurSec, frameDurSec, { keyFrame: f % 60 === 0 });
+      }
+      videoSource.close();
+      if (onProgress) onProgress(totalFrames, totalFrames, "finalizing");
+      const renderedAudio = await renderBgmToAudioBuffer(
+        audioOptions.audioBuffer,
+        totalFrames * frameDurSec,
+        audioOptions.volume,
+        audioOptions.startOffsetSec || 0,
+        48000
+      );
+      await audioSource.add(renderedAudio);
+      audioSource.close();
+      await output.finalize();
+      return {
+        blob: new Blob([target.buffer], { type: "video/mp4" }),
+        ext: "mp4",
+        audioIncluded: true,
+        audioCodec: "aac",
+      };
+    } catch (err) {
+      console.warn("Mediabunny Wipe audio failed:", err);
+    } finally {
+      if (isSafariBrowser()) {
+        globalThis.AudioEncoder = origAE;
+        globalThis.AudioData = origAD;
+      }
+    }
+  }
+
   const canEncodeAudio = !!audioSpec;
 
   const target = new ArrayBufferTarget();
@@ -724,5 +1198,6 @@ export async function exportWipeVideoLocal(
     ext: "mp4",
     audioIncluded,
     audioCodec,
+    engine: "webcodecs",
   };
 }

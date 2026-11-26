@@ -1670,6 +1670,8 @@ function openExportResultModal(blob, filename, kind = "video", extraMeta = "") {
 async function handleExport() {
   const enabled = state.items.filter((it) => it.enabled);
   if (state.busy || !enabled.length) return;
+  // Synchronously unlock Web Audio inside click gesture BEFORE any async await (critical for Safari!)
+  const unlockedCtx = audioMgr.hasAudio() ? audioMgr.unlock() : null;
   stopPlay();
   stopAuditionBgm();
   state.busy = true;
@@ -1679,12 +1681,13 @@ async function handleExport() {
     const schedule = audioMgr.buildPhotoSchedule(enabled, state.settings);
     const audioOpts = {
       audioBuffer: audioMgr.hasAudio() ? audioMgr.audioBuffer : null,
+      audioCtx: unlockedCtx,
       volume: state.settings.bgmVolume,
       startOffsetSec: state.settings.bgmStartSec || 0,
       photoDurationsSec: schedule.mode === "onset" || schedule.mode === "bpm" ? schedule.durationsSec : null,
     };
 
-    const { blob, ext, audioIncluded, audioCodec } = await exportTimelapseLocal(
+    const { blob, ext, audioIncluded, audioCodec, engine, wasmErrMsg } = await exportTimelapseLocal(
       state.items,
       state.settings,
       state.lang,
@@ -1701,14 +1704,15 @@ async function handleExport() {
     );
 
     const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "").slice(0, 14);
+    const engTag = engine === "wasm-aac" ? " · WASM" : engine === "mediarecorder" ? " · MR" : "";
     const audioNote = audioOpts.audioBuffer
       ? audioIncluded
         ? state.lang === "en"
-          ? `🔊 Music included (${(audioCodec || "AAC").toUpperCase()})`
-          : `🔊 已合入配乐 (${(audioCodec || "AAC").toUpperCase()})`
+          ? `🔊 Music included (${(audioCodec || "AAC").toUpperCase()}${engTag})`
+          : `🔊 已合入配乐 (${(audioCodec || "AAC").toUpperCase()}${engTag})`
         : state.lang === "en"
-        ? "⚠️ Browser does not support audio muxing"
-        : "⚠️ 当前浏览器不支持音频封装"
+        ? `⚠️ Browser does not support audio muxing${wasmErrMsg ? `: ${wasmErrMsg}` : ""}`
+        : `⚠️ 当前浏览器不支持音频封装${wasmErrMsg ? `: ${wasmErrMsg}` : ""}`
       : "";
     const sizeMb = openExportResultModal(blob, `eachday_${stamp}.${ext}`, "video", audioNote);
     showToast(t("stExportDone", sizeMb), 3500);
@@ -1765,11 +1769,13 @@ async function handleExportGif() {
 async function handleExportWipeVideo() {
   const enabled = state.items.filter((it) => it.enabled);
   if (state.busy || enabled.length < 2) return;
+  const unlockedCtx = audioMgr.hasAudio() ? audioMgr.unlock() : null;
   const li = Math.max(0, Math.min(enabled.length - 1, Number($("selCmpLeft").value) || 0));
   const ri = Math.max(0, Math.min(enabled.length - 1, Number($("selCmpRight").value) || enabled.length - 1));
 
   $("compareModal").classList.add("hidden");
   stopPlay();
+  stopAuditionBgm();
   state.busy = true;
   updateWorkspaceVisibility();
 
@@ -1777,6 +1783,7 @@ async function handleExportWipeVideo() {
     const audioOpts = audioMgr.hasAudio()
       ? {
           audioBuffer: audioMgr.audioBuffer,
+          audioCtx: unlockedCtx,
           volume: state.settings.bgmVolume,
           startOffsetSec: state.settings.bgmStartSec || 0,
         }

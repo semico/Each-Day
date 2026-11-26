@@ -39,6 +39,22 @@ export class LocalAudioManager {
     return this.audioCtx;
   }
 
+  /**
+   * Synchronously unlock/resume AudioContext inside a user-gesture handler
+   * (critical for Safari before any async await!).
+   */
+  unlock() {
+    const ctx = this._ensureCtx();
+    if (ctx.state === "suspended") {
+      try {
+        ctx.resume().catch(() => {});
+      } catch {
+        // ignore
+      }
+    }
+    return ctx;
+  }
+
   hasAudio() {
     return !!this.audioBuffer;
   }
