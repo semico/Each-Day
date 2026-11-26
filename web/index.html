@@ -129,12 +129,21 @@
               <span data-i18n="lblBgBokeh">突出主体 · 背景虚化</span>
               <input type="checkbox" id="chkBgBokeh" />
             </label>
-            <div id="bokehStrengthRow" class="control-row mt-8 hidden">
-              <div class="control-head">
-                <label data-i18n="lblBokehStrength">虚化强度</label>
-                <span class="val" id="valBokehStrength">60%</span>
+            <div id="bokehStrengthRow" class="mt-8 hidden">
+              <div class="control-row">
+                <div class="control-head">
+                  <label data-i18n="lblBokehStrength">虚化强度</label>
+                  <span class="val" id="valBokehStrength">60%</span>
+                </div>
+                <input type="range" id="rngBokehStrength" min="0.20" max="1.00" step="0.05" value="0.60" />
               </div>
-              <input type="range" id="rngBokehStrength" min="0.20" max="1.00" step="0.05" value="0.60" />
+              <div class="control-row">
+                <div class="control-head">
+                  <label data-i18n="lblBokehSize">主体清晰保护范围</label>
+                  <span class="val" id="valBokehSize">1.12×</span>
+                </div>
+                <input type="range" id="rngBokehSize" min="0.80" max="1.50" step="0.02" value="1.12" />
+              </div>
             </div>
           </section>
 
@@ -263,6 +272,83 @@
                 <label class="small-label" data-i18n="lblMagTitle">杂志刊头标题</label>
                 <input type="text" id="txtMagazineTitle" class="text-input" value="EACHDAY" maxlength="20" placeholder="如 EACHDAY / VOGUE / MY LIFE" />
               </div>
+              <div class="style-edit-toggle-row mt-8">
+                <button class="btn btn-secondary btn-xs btn-full" id="btnToggleStyleEditor" type="button" data-i18n="btnCustomizeStyle">
+                  🎨 自定义编辑样式
+                </button>
+              </div>
+              <div id="styleEditorBox" class="custom-label-box hidden">
+                <div class="card-head-row">
+                  <label class="small-label" data-i18n="lblStyleFont">字体</label>
+                  <button class="link-btn" id="btnResetStyle" type="button" data-i18n="btnResetStyle">恢复默认</button>
+                </div>
+                <select id="selLabelFont" class="select-input">
+                  <option value="sans" data-i18n="fontSans">现代无衬线</option>
+                  <option value="serif" data-i18n="fontSerif">杂志衬线</option>
+                  <option value="mono" data-i18n="fontMono">胶片等宽</option>
+                  <option value="display" data-i18n="fontDisplay">粗体冲击</option>
+                </select>
+                <div class="control-row mt-8">
+                  <div class="control-head">
+                    <label data-i18n="lblStyleSize">字号缩放</label>
+                    <span class="val" id="valLabelSize">1.00×</span>
+                  </div>
+                  <input type="range" id="rngLabelSize" min="0.65" max="1.65" step="0.05" value="1.00" />
+                </div>
+                <div class="color-picker-grid mt-8">
+                  <div class="color-field">
+                    <label class="small-label" data-i18n="lblStyleColor">文字颜色</label>
+                    <div class="color-input-wrap">
+                      <input type="color" id="inpLabelColor" value="#ffffff" />
+                      <div class="swatch-row">
+                        <button type="button" class="color-swatch" data-color="#ffffff" style="background:#ffffff"></button>
+                        <button type="button" class="color-swatch" data-color="#ffd08a" style="background:#ffd08a"></button>
+                        <button type="button" class="color-swatch" data-color="#6ee7b7" style="background:#6ee7b7"></button>
+                        <button type="button" class="color-swatch" data-color="#f472b6" style="background:#f472b6"></button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="color-field">
+                    <label class="small-label" data-i18n="lblStyleAccent">强调/边框色</label>
+                    <div class="color-input-wrap">
+                      <input type="color" id="inpLabelAccent" value="#3b82f6" />
+                      <div class="swatch-row">
+                        <button type="button" class="accent-swatch" data-accent="#3b82f6" style="background:#3b82f6"></button>
+                        <button type="button" class="accent-swatch" data-accent="#10b981" style="background:#10b981"></button>
+                        <button type="button" class="accent-swatch" data-accent="#f59e0b" style="background:#f59e0b"></button>
+                        <button type="button" class="accent-swatch" data-accent="#ef4444" style="background:#ef4444"></button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="control-row mt-8">
+                  <label class="small-label" data-i18n="lblStyleBg">底框样式</label>
+                  <div class="seg-group" id="labelBgStyleGroup">
+                    <button class="seg-btn active" data-val="glass" data-i18n="bgGlass">胶囊</button>
+                    <button class="seg-btn" data-val="solid" data-i18n="bgSolid">卡片</button>
+                    <button class="seg-btn" data-val="frame" data-i18n="bgFrame">边框</button>
+                    <button class="seg-btn" data-val="none" data-i18n="bgNone">无框</button>
+                  </div>
+                </div>
+                <div class="control-row mt-8">
+                  <div class="control-head">
+                    <label data-i18n="lblStyleOpacity">底框透明度</label>
+                    <span class="val" id="valLabelBgOpacity">64%</span>
+                  </div>
+                  <input type="range" id="rngLabelBgOpacity" min="0" max="1" step="0.04" value="0.64" />
+                </div>
+                <div class="control-row mt-8">
+                  <div class="control-head">
+                    <label data-i18n="lblStyleTracking">字间距</label>
+                    <span class="val" id="valLabelTracking">0</span>
+                  </div>
+                  <input type="range" id="rngLabelTracking" min="0" max="5" step="1" value="0" />
+                </div>
+                <label class="switch-row mt-6">
+                  <span class="small-label" data-i18n="lblStyleUpper">英文全大写</span>
+                  <input type="checkbox" id="chkLabelUppercase" />
+                </label>
+              </div>
               <div class="control-row mt-8">
                 <label class="small-label" data-i18n="lblWmStyle">文案内容</label>
                 <select id="selWmStyle" class="select-input">
@@ -362,13 +448,27 @@
           </section>
 
           <section class="card">
-            <h3 class="card-title" data-i18n="secBgm">本地配乐与踩点 (BGM)</h3>
+            <h3 class="card-title" data-i18n="secBgm">本地配乐与真卡点 (BGM)</h3>
             <label class="btn btn-secondary btn-full" for="audioInput" data-i18n="btnPickAudio">
               🎵 选择本地音频 (MP3/M4A/WAV)
             </label>
             <div id="bgmChip" class="bgm-chip mt-8 hidden">
+              <button class="audition-btn" id="btnAuditionBgm" type="button" data-i18n="btnAuditionPlay">▶ 试听</button>
               <span id="bgmName">-</span>
               <button class="icon-close" id="btnClearBgm" type="button" title="Remove">✕</button>
+            </div>
+            <div id="bgmWaveWrap" class="mt-8 hidden">
+              <canvas id="beatWaveformCanvas" class="waveform-canvas" width="246" height="44"></canvas>
+              <div class="beat-stats-row mt-6">
+                <span class="small-label" id="beatStats">-</span>
+              </div>
+              <div class="control-row mt-6">
+                <div class="control-head">
+                  <label data-i18n="lblBgmStart">音乐起点（点击波形定位）</label>
+                  <span class="val" id="valBgmStart">0.0s</span>
+                </div>
+                <input type="range" id="rngBgmStart" min="0" max="60" step="0.1" value="0" />
+              </div>
             </div>
             <div id="bgmVolRow" class="control-row mt-8 hidden">
               <div class="control-head">
@@ -379,18 +479,34 @@
             </div>
             <div class="divider-line"></div>
             <label class="switch-row">
-              <span data-i18n="lblBeatSync">按 BPM 节拍自动切图</span>
+              <span data-i18n="lblBeatSync">开启音乐卡点切图</span>
               <input type="checkbox" id="chkBeatSync" />
             </label>
             <div id="beatSyncBox" class="mt-8 hidden">
-              <div class="bpm-row">
+              <div class="seg-group" id="beatModeGroup">
+                <button class="seg-btn active" data-val="onset" data-i18n="beatModeOnset">🥁 自动鼓点卡点</button>
+                <button class="seg-btn" data-val="bpm" data-i18n="beatModeBpm">固定 BPM</button>
+              </div>
+              <div id="onsetControls" class="mt-8">
+                <div class="control-row">
+                  <div class="control-head">
+                    <label data-i18n="lblBeatSens">卡点灵敏度（鼓点识别）</label>
+                    <span class="val" id="valBeatSens">55%</span>
+                  </div>
+                  <input type="range" id="rngBeatSens" min="0.15" max="0.90" step="0.05" value="0.55" />
+                </div>
+                <div id="beatNeedAudioHint" class="small-hint mt-6" data-i18n="beatNeedAudioHint">
+                  导入本地音乐后，将自动分析鼓点波形实现真实卡点切换！
+                </div>
+              </div>
+              <div id="bpmControls" class="bpm-row mt-8 hidden">
                 <input type="number" id="numBpm" class="text-input bpm-input" min="50" max="220" value="120" />
                 <span class="small-label">BPM</span>
                 <button class="btn btn-secondary btn-xs" id="btnTapBpm" type="button" data-i18n="btnTapBpm">🥁 点击测速</button>
               </div>
               <div class="seg-group mt-8" id="beatDivGroup">
-                <button class="seg-btn" data-val="0.5" data-i18n="beatTwo">每 2 拍 (0.5×)</button>
-                <button class="seg-btn active" data-val="1" data-i18n="beatOne">每 1 拍</button>
+                <button class="seg-btn" data-val="0.5" data-i18n="beatTwo">每 2 鼓点</button>
+                <button class="seg-btn active" data-val="1" data-i18n="beatOne">每 1 鼓点</button>
                 <button class="seg-btn" data-val="2" data-i18n="beatHalf">每半拍 (2×)</button>
               </div>
             </div>

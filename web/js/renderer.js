@@ -130,12 +130,107 @@ let fgScratchCanvas = null;
 let fgScratchCtx = null;
 let bokehBlurCanvas = null;
 let bokehBlurCtx = null;
+let bokehMidCanvas = null;
+let bokehMidCtx = null;
 let bokehTinyCanvas = null;
 let bokehTinyCtx = null;
+let bokehSolidCanvas = null;
+let bokehSolidCtx = null;
 let bokehMaskCanvas = null;
 let bokehMaskCtx = null;
+let bokehFeatherTinyCanvas = null;
+let bokehFeatherTinyCtx = null;
 let maskPatchCanvas = null;
 let maskPatchCtx = null;
+
+/**
+ * Tuned visual style presets — selecting a preset loads these editable defaults,
+ * and users can further customize every visual property live!
+ */
+export const LABEL_THEME_PRESETS = {
+  pill: {
+    labelFont: "sans",
+    labelSize: 1.0,
+    labelColor: "#ffffff",
+    labelAccent: "#3b82f6",
+    labelBgStyle: "glass",
+    labelBgOpacity: 0.64,
+    labelUppercase: false,
+    labelTracking: 0,
+  },
+  magazine: {
+    labelFont: "serif",
+    labelSize: 1.0,
+    labelColor: "#ffffff",
+    labelAccent: "#ffffff",
+    labelBgStyle: "frame",
+    labelBgOpacity: 0.62,
+    labelUppercase: true,
+    labelTracking: 3,
+  },
+  minimal: {
+    labelFont: "display",
+    labelSize: 1.08,
+    labelColor: "#ffffff",
+    labelAccent: "#10b981",
+    labelBgStyle: "none",
+    labelBgOpacity: 0,
+    labelUppercase: false,
+    labelTracking: 0,
+  },
+  film: {
+    labelFont: "mono",
+    labelSize: 1.0,
+    labelColor: "#ffd08a",
+    labelAccent: "#ff8c2b",
+    labelBgStyle: "none",
+    labelBgOpacity: 0,
+    labelUppercase: true,
+    labelTracking: 1,
+  },
+  sports: {
+    labelFont: "display",
+    labelSize: 1.0,
+    labelColor: "#ffffff",
+    labelAccent: "#10b981",
+    labelBgStyle: "solid",
+    labelBgOpacity: 0.8,
+    labelUppercase: true,
+    labelTracking: 1,
+  },
+};
+
+function getFontFamily(fontKey) {
+  switch (fontKey) {
+    case "serif":
+      return 'Georgia, "Times New Roman", "Songti SC", "Noto Serif SC", serif';
+    case "mono":
+      return '"Courier New", ui-monospace, SFMono-Regular, Menlo, monospace';
+    case "display":
+      return '"Impact", "Arial Black", -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif';
+    case "sans":
+    default:
+      return '-apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Helvetica Neue", sans-serif';
+  }
+}
+
+function hexToRgba(hex, alpha = 1) {
+  const clean = String(hex || "#ffffff").replace("#", "").trim();
+  const full = clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean;
+  const num = parseInt(full, 16);
+  if (Number.isNaN(num)) return `rgba(255, 255, 255, ${alpha})`;
+  const r = (num >> 16) & 255;
+  const g = (num >> 8) & 255;
+  const b = num & 255;
+  return `rgba(${r}, ${g}, ${b}, ${Math.max(0, Math.min(1, alpha))})`;
+}
+
+function applyTracking(str, tracking) {
+  const t = Math.max(0, Math.round(Number(tracking) || 0));
+  if (t <= 0) return str;
+  const hair = t >= 4 ? "  " : t >= 2 ? " " : "\u200A";
+  return str.split("").join(hair);
+}
 
 function drawBlurBackground(ctx, srcCanvas, cw, ch) {
   const sw = srcCanvas.width;
@@ -192,121 +287,162 @@ function splitHeadlineSub(text) {
 function drawStyledLabel(ctx, cw, ch, text, settings, item) {
   if (!text) return;
   const theme = settings.labelTheme || "pill";
+  const preset = LABEL_THEME_PRESETS[theme] || LABEL_THEME_PRESETS.pill;
   const position = settings.watermarkPosition || "bottom_left";
   const shortSide = Math.min(cw, ch);
 
+  const fontKey = settings.labelFont || preset.labelFont;
+  const fontFamily = getFontFamily(fontKey);
+  const sizeMul = Math.max(0.65, Math.min(1.65, Number(settings.labelSize) || preset.labelSize || 1.0));
+  const textColor = settings.labelColor || preset.labelColor || "#ffffff";
+  const accentColor = settings.labelAccent || preset.labelAccent || "#10b981";
+  const bgStyle = settings.labelBgStyle || preset.labelBgStyle || "glass";
+  const bgOpacity =
+    settings.labelBgOpacity !== undefined && settings.labelBgOpacity !== null
+      ? Math.max(0, Math.min(1, Number(settings.labelBgOpacity)))
+      : preset.labelBgOpacity;
+  const uppercase =
+    settings.labelUppercase !== undefined ? !!settings.labelUppercase : !!preset.labelUppercase;
+  const tracking =
+    settings.labelTracking !== undefined ? Number(settings.labelTracking) : preset.labelTracking;
+
+  const formatStr = (s, extraTracking = tracking) => {
+    const cased = uppercase ? s.toUpperCase() : s;
+    return applyTracking(cased, extraTracking);
+  };
+
   if (theme === "magazine") {
-    // Vogue / Kinfolk Editorial Magazine Cover Style
+    // Editorial Magazine Cover Layout (fully editable font, colors, masthead, frame & opacity!)
     const [head, sub] = splitHeadlineSub(text);
-    const masthead = (settings.magazineTitle || "EACHDAY").trim().toUpperCase() || "EACHDAY";
+    const rawMasthead = (settings.magazineTitle || "EACHDAY").trim() || "EACHDAY";
+    const masthead = formatStr(rawMasthead, Math.max(1, tracking));
     ctx.save();
 
-    // Top subtle editorial dark vignette so masthead is ultra-legible
-    const topGrad = ctx.createLinearGradient(0, 0, 0, ch * 0.24);
-    topGrad.addColorStop(0, "rgba(0, 0, 0, 0.62)");
-    topGrad.addColorStop(1, "rgba(0, 0, 0, 0)");
-    ctx.fillStyle = topGrad;
-    ctx.fillRect(0, 0, cw, ch * 0.24);
+    // Optional editorial dark gradient vignette controlled by bgOpacity
+    if (bgOpacity > 0.02) {
+      const topGrad = ctx.createLinearGradient(0, 0, 0, ch * 0.24);
+      topGrad.addColorStop(0, `rgba(0, 0, 0, ${(bgOpacity * 0.95).toFixed(2)})`);
+      topGrad.addColorStop(1, "rgba(0, 0, 0, 0)");
+      ctx.fillStyle = topGrad;
+      ctx.fillRect(0, 0, cw, ch * 0.24);
 
-    // Bottom subtle vignette for issue/date tagline
-    const botGrad = ctx.createLinearGradient(0, ch * 0.78, 0, ch);
-    botGrad.addColorStop(0, "rgba(0, 0, 0, 0)");
-    botGrad.addColorStop(1, "rgba(0, 0, 0, 0.68)");
-    ctx.fillStyle = botGrad;
-    ctx.fillRect(0, ch * 0.78, cw, ch * 0.22);
+      const botGrad = ctx.createLinearGradient(0, ch * 0.78, 0, ch);
+      botGrad.addColorStop(0, "rgba(0, 0, 0, 0)");
+      botGrad.addColorStop(1, `rgba(0, 0, 0, ${Math.min(0.88, bgOpacity * 1.05).toFixed(2)})`);
+      ctx.fillStyle = botGrad;
+      ctx.fillRect(0, ch * 0.78, cw, ch * 0.22);
+    }
 
-    // Thin inner magazine border frame
     const inset = Math.round(shortSide * 0.028);
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.28)";
-    ctx.lineWidth = Math.max(1, Math.round(shortSide * 0.002));
-    ctx.strokeRect(inset, inset, cw - inset * 2, ch - inset * 2);
+    if (bgStyle !== "none") {
+      ctx.strokeStyle = hexToRgba(accentColor, bgStyle === "solid" ? 0.8 : 0.36);
+      ctx.lineWidth = Math.max(1, Math.round(shortSide * (bgStyle === "solid" ? 0.004 : 0.0022)));
+      ctx.strokeRect(inset, inset, cw - inset * 2, ch - inset * 2);
+    }
 
-    // Masthead serif headline at top center
-    const titleSize = Math.max(24, Math.round(shortSide * 0.105));
-    ctx.font = `800 ${titleSize}px Georgia, "Times New Roman", "Songti SC", serif`;
+    // Masthead headline at top center
+    const titleSize = Math.max(20, Math.round(shortSide * 0.102 * sizeMul));
+    ctx.font = `800 ${titleSize}px ${fontFamily}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    ctx.shadowColor = "rgba(0,0,0,0.45)";
+    ctx.shadowColor = "rgba(0,0,0,0.48)";
     ctx.shadowBlur = 12;
-    ctx.fillStyle = "rgba(255, 255, 255, 0.94)";
-    const spaced = masthead.split("").join(" ");
-    ctx.fillText(spaced, cw * 0.5, inset + Math.round(shortSide * 0.028), cw - inset * 4);
+    ctx.fillStyle = hexToRgba(textColor, 0.96);
+    ctx.fillText(masthead, cw * 0.5, inset + Math.round(shortSide * 0.028), cw - inset * 4);
 
     // Issue headline + date at bottom
-    const mainSize = Math.max(18, Math.round(shortSide * 0.056));
-    const subSize = Math.max(12, Math.round(shortSide * 0.028));
-    const bottomY = ch - inset - Math.round(shortSide * 0.045);
+    const mainSize = Math.max(15, Math.round(shortSide * 0.054 * sizeMul));
+    const subSize = Math.max(11, Math.round(shortSide * 0.027 * sizeMul));
+    const bottomY = ch - inset - Math.round(shortSide * 0.044);
 
     ctx.shadowBlur = 8;
     ctx.textBaseline = "bottom";
     if (sub) {
-      ctx.font = `600 ${subSize}px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif`;
-      ctx.fillStyle = "rgba(255, 255, 255, 0.78)";
-      ctx.fillText(sub.toUpperCase(), cw * 0.5, bottomY);
+      ctx.font = `600 ${subSize}px ${getFontFamily("sans")}`;
+      ctx.fillStyle = hexToRgba(textColor, 0.8);
+      ctx.fillText(formatStr(sub, Math.min(2, tracking)), cw * 0.5, bottomY, cw - inset * 4);
 
-      ctx.font = `700 ${mainSize}px Georgia, "Times New Roman", "Songti SC", serif`;
-      ctx.fillStyle = "#ffffff";
-      ctx.fillText(head.toUpperCase(), cw * 0.5, bottomY - subSize - Math.round(shortSide * 0.014));
+      ctx.font = `700 ${mainSize}px ${fontFamily}`;
+      ctx.fillStyle = textColor;
+      ctx.fillText(formatStr(head, Math.min(2, tracking)), cw * 0.5, bottomY - subSize - Math.round(shortSide * 0.014), cw - inset * 4);
     } else {
-      ctx.font = `700 ${mainSize}px Georgia, "Times New Roman", "Songti SC", serif`;
-      ctx.fillStyle = "#ffffff";
-      ctx.fillText(head.toUpperCase(), cw * 0.5, bottomY);
+      ctx.font = `700 ${mainSize}px ${fontFamily}`;
+      ctx.fillStyle = textColor;
+      ctx.fillText(formatStr(head, Math.min(2, tracking)), cw * 0.5, bottomY, cw - inset * 4);
     }
     ctx.restore();
     return;
   }
 
   if (theme === "film") {
-    // Classic Retro 35mm Quartz Camera Timestamp (Kodak/Fuji amber glow)
-    const fontSize = Math.max(15, Math.round(shortSide * 0.04));
+    // Retro 35mm Quartz Camera Timestamp (fully editable color/glow/font/size/box)
+    const fontSize = Math.max(13, Math.round(shortSide * 0.04 * sizeMul));
     const marginX = Math.round(shortSide * 0.052);
     const marginY = Math.round(shortSide * 0.05);
     const [head, sub] = splitHeadlineSub(text);
     const parts = (item?.dateStr || "2026.01.01").split(".");
-    const stamp = sub ? `'${(parts[0] || "26").slice(-2)} ${parts[1] || "01"} ${parts[2] || "01"}  ${head}` : text;
+    const rawStamp = sub ? `'${(parts[0] || "26").slice(-2)} ${parts[1] || "01"} ${parts[2] || "01"}  ${head}` : text;
+    const stamp = formatStr(rawStamp);
 
     ctx.save();
-    ctx.font = `700 ${fontSize}px "Courier New", ui-monospace, SFMono-Regular, Menlo, monospace`;
+    ctx.font = `700 ${fontSize}px ${fontFamily}`;
     ctx.textBaseline = "middle";
+    const tw = ctx.measureText(stamp).width;
+    const padX = Math.round(fontSize * 0.55);
+    const padY = Math.round(fontSize * 0.34);
+
     let tx = marginX;
     let ty = ch - marginY - fontSize * 0.5;
+    let align = "left";
     if (position === "bottom_center") {
-      ctx.textAlign = "center";
+      align = "center";
       tx = cw * 0.5;
     } else if (position === "top_left") {
-      ctx.textAlign = "left";
       ty = marginY + fontSize * 0.5;
     } else if (position === "top_right") {
-      ctx.textAlign = "right";
+      align = "right";
       tx = cw - marginX;
       ty = marginY + fontSize * 0.5;
-    } else {
-      ctx.textAlign = "left";
     }
-    ctx.shadowColor = "rgba(255, 110, 0, 0.85)";
+
+    if (bgStyle !== "none" && bgOpacity > 0.02) {
+      const bx = align === "center" ? tx - tw * 0.5 - padX : align === "right" ? tx - tw - padX : tx - padX;
+      const by = ty - fontSize * 0.55 - padY;
+      const bw = tw + padX * 2;
+      const bh = fontSize * 1.1 + padY * 2;
+      drawRoundedRectPath(ctx, bx, by, bw, bh, bgStyle === "glass" ? bh * 0.5 : 6);
+      ctx.fillStyle = `rgba(10, 12, 18, ${bgOpacity.toFixed(2)})`;
+      ctx.fill();
+      if (bgStyle === "frame") {
+        ctx.strokeStyle = hexToRgba(accentColor, 0.75);
+        ctx.lineWidth = Math.max(1.5, shortSide / 500);
+        ctx.stroke();
+      }
+    }
+
+    ctx.textAlign = align;
+    ctx.shadowColor = hexToRgba(accentColor, 0.85);
     ctx.shadowBlur = Math.max(6, fontSize * 0.35);
-    ctx.fillStyle = "#ff8c2b";
+    ctx.fillStyle = accentColor;
     ctx.fillText(stamp, tx, ty);
     ctx.shadowBlur = 0;
-    ctx.fillStyle = "#ffd08a";
+    ctx.fillStyle = textColor;
     ctx.fillText(stamp, tx, ty);
     ctx.restore();
     return;
   }
 
   if (theme === "minimal") {
-    // Clean Editorial Big Typography (zero background box)
+    // Editorial Minimal Typography (editable font, size, color, optional box)
     const [head, sub] = splitHeadlineSub(text);
-    const bigSize = Math.max(18, Math.round(shortSide * 0.056));
-    const smallSize = Math.max(12, Math.round(shortSide * 0.026));
+    const headDisp = formatStr(head);
+    const subDisp = sub ? formatStr(sub, Math.min(2, tracking)) : "";
+    const bigSize = Math.max(15, Math.round(shortSide * 0.056 * sizeMul));
+    const smallSize = Math.max(11, Math.round(shortSide * 0.026 * sizeMul));
     const marginX = Math.round(shortSide * 0.055);
     const marginY = Math.round(shortSide * 0.055);
 
     ctx.save();
-    ctx.shadowColor = "rgba(0, 0, 0, 0.65)";
-    ctx.shadowBlur = 10;
-    ctx.shadowOffsetY = 2;
-
     let align = "left";
     let tx = marginX;
     let isTop = false;
@@ -320,31 +456,55 @@ function drawStyledLabel(ctx, cw, ch, text, settings, item) {
       tx = cw - marginX;
       isTop = true;
     }
+
+    // Optional background backdrop if user picks glass/solid/frame
+    if (bgStyle !== "none" && bgOpacity > 0.02) {
+      ctx.font = `800 ${bigSize}px ${fontFamily}`;
+      const w1 = ctx.measureText(headDisp).width;
+      ctx.font = `500 ${smallSize}px ${fontFamily}`;
+      const w2 = subDisp ? ctx.measureText(subDisp).width : 0;
+      const bw = Math.max(w1, w2) + bigSize * 0.9;
+      const bh = bigSize + (subDisp ? smallSize + 8 : 0) + bigSize * 0.55;
+      const bx = align === "center" ? tx - bw * 0.5 : align === "right" ? tx - bw + bigSize * 0.45 : tx - bigSize * 0.45;
+      const by = isTop ? marginY - bigSize * 0.25 : ch - marginY - bh + bigSize * 0.25;
+      drawRoundedRectPath(ctx, bx, by, bw, bh, bgStyle === "glass" ? 16 : 8);
+      ctx.fillStyle = `rgba(10, 12, 18, ${bgOpacity.toFixed(2)})`;
+      ctx.fill();
+      if (bgStyle === "frame") {
+        ctx.strokeStyle = hexToRgba(accentColor, 0.72);
+        ctx.lineWidth = Math.max(1.5, shortSide / 480);
+        ctx.stroke();
+      }
+    }
+
+    ctx.shadowColor = "rgba(0, 0, 0, 0.65)";
+    ctx.shadowBlur = 10;
+    ctx.shadowOffsetY = 2;
     ctx.textAlign = align;
 
     if (isTop) {
       ctx.textBaseline = "top";
-      ctx.font = `800 ${bigSize}px -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif`;
-      ctx.fillStyle = "#ffffff";
-      ctx.fillText(head, tx, marginY);
-      if (sub) {
-        ctx.font = `500 ${smallSize}px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif`;
-        ctx.fillStyle = "rgba(255,255,255,0.82)";
-        ctx.fillText(sub, tx, marginY + bigSize + 4);
+      ctx.font = `800 ${bigSize}px ${fontFamily}`;
+      ctx.fillStyle = textColor;
+      ctx.fillText(headDisp, tx, marginY);
+      if (subDisp) {
+        ctx.font = `500 ${smallSize}px ${fontFamily}`;
+        ctx.fillStyle = hexToRgba(textColor, 0.82);
+        ctx.fillText(subDisp, tx, marginY + bigSize + 4);
       }
     } else {
       ctx.textBaseline = "bottom";
-      if (sub) {
-        ctx.font = `500 ${smallSize}px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif`;
-        ctx.fillStyle = "rgba(255,255,255,0.82)";
-        ctx.fillText(sub, tx, ch - marginY);
-        ctx.font = `800 ${bigSize}px -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif`;
-        ctx.fillStyle = "#ffffff";
-        ctx.fillText(head, tx, ch - marginY - smallSize - 4);
+      if (subDisp) {
+        ctx.font = `500 ${smallSize}px ${fontFamily}`;
+        ctx.fillStyle = hexToRgba(textColor, 0.82);
+        ctx.fillText(subDisp, tx, ch - marginY);
+        ctx.font = `800 ${bigSize}px ${fontFamily}`;
+        ctx.fillStyle = textColor;
+        ctx.fillText(headDisp, tx, ch - marginY - smallSize - 4);
       } else {
-        ctx.font = `800 ${bigSize}px -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif`;
-        ctx.fillStyle = "#ffffff";
-        ctx.fillText(head, tx, ch - marginY);
+        ctx.font = `800 ${bigSize}px ${fontFamily}`;
+        ctx.fillStyle = textColor;
+        ctx.fillText(headDisp, tx, ch - marginY);
       }
     }
     ctx.restore();
@@ -352,14 +512,14 @@ function drawStyledLabel(ctx, cw, ch, text, settings, item) {
   }
 
   if (theme === "sports") {
-    // Sharp Athletic Neon Accent Bar Tag
-    const fontSize = Math.max(13, Math.round(shortSide * 0.036));
+    // Sharp Athletic Accent Bar Tag (editable accent stripe, font, color, size, box opacity)
+    const fontSize = Math.max(12, Math.round(shortSide * 0.036 * sizeMul));
     ctx.save();
-    ctx.font = `800 ${fontSize}px -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif`;
+    ctx.font = `800 ${fontSize}px ${fontFamily}`;
     ctx.textBaseline = "middle";
-    const display = text.toUpperCase();
+    const display = formatStr(text);
     const tw = ctx.measureText(display).width;
-    const stripeW = Math.max(4, Math.round(fontSize * 0.22));
+    const stripeW = Math.max(4, Math.round(fontSize * 0.24));
     const padX = Math.round(fontSize * 0.65);
     const padY = Math.round(fontSize * 0.42);
     const boxW = Math.round(tw + padX * 2 + stripeW);
@@ -376,30 +536,37 @@ function drawStyledLabel(ctx, cw, ch, text, settings, item) {
       py = marginY;
     }
 
-    drawRoundedRectPath(ctx, px, py, boxW, boxH, 6);
-    ctx.fillStyle = "rgba(9, 13, 22, 0.78)";
-    ctx.fill();
+    if (bgStyle !== "none" && bgOpacity > 0.02) {
+      drawRoundedRectPath(ctx, px, py, boxW, boxH, bgStyle === "glass" ? boxH * 0.5 : 6);
+      ctx.fillStyle = `rgba(9, 13, 22, ${bgOpacity.toFixed(2)})`;
+      ctx.fill();
+      if (bgStyle === "frame") {
+        ctx.strokeStyle = hexToRgba(accentColor, 0.75);
+        ctx.lineWidth = Math.max(1.5, shortSide / 500);
+        ctx.stroke();
+      }
+    }
 
-    // Vibrant emerald-blue accent stripe on left
-    const stripeGrad = ctx.createLinearGradient(0, py, 0, py + boxH);
-    stripeGrad.addColorStop(0, "#3b82f6");
-    stripeGrad.addColorStop(1, "#10b981");
-    ctx.fillStyle = stripeGrad;
+    // Accent stripe on left
+    ctx.fillStyle = accentColor;
     ctx.fillRect(px, py, stripeW, boxH);
 
-    ctx.fillStyle = "#ffffff";
+    ctx.shadowColor = "rgba(0,0,0,0.45)";
+    ctx.shadowBlur = 4;
+    ctx.fillStyle = textColor;
     ctx.fillText(display, px + stripeW + padX * 0.9, py + boxH * 0.53);
     ctx.restore();
     return;
   }
 
-  // Default: "pill" (Signature Dark Frosted Pill)
-  const fontSize = Math.max(13, Math.round(shortSide * 0.036));
+  // Default: "pill" (Signature Frosted Pill — fully editable!)
+  const fontSize = Math.max(12, Math.round(shortSide * 0.036 * sizeMul));
+  const display = formatStr(text);
   ctx.save();
-  ctx.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Helvetica Neue", sans-serif`;
+  ctx.font = `600 ${fontSize}px ${fontFamily}`;
   ctx.textBaseline = "middle";
 
-  const metrics = ctx.measureText(text);
+  const metrics = ctx.measureText(display);
   const tw = metrics.width;
   const padX = Math.round(fontSize * 0.72);
   const padY = Math.round(fontSize * 0.44);
@@ -419,17 +586,20 @@ function drawStyledLabel(ctx, cw, ch, text, settings, item) {
     py = marginY;
   }
 
-  drawRoundedRectPath(ctx, px, py, pillW, pillH, pillH * 0.5);
-  ctx.fillStyle = "rgba(12, 14, 18, 0.64)";
-  ctx.fill();
-  ctx.lineWidth = Math.max(1, shortSide / 720);
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
-  ctx.stroke();
+  if (bgStyle !== "none" && bgOpacity > 0.02) {
+    const radius = bgStyle === "glass" ? pillH * 0.5 : bgStyle === "solid" ? 8 : 6;
+    drawRoundedRectPath(ctx, px, py, pillW, pillH, radius);
+    ctx.fillStyle = `rgba(12, 14, 18, ${bgOpacity.toFixed(2)})`;
+    ctx.fill();
+    ctx.lineWidth = Math.max(1, shortSide / 620);
+    ctx.strokeStyle = bgStyle === "frame" ? hexToRgba(accentColor, 0.8) : hexToRgba(accentColor, 0.32);
+    ctx.stroke();
+  }
 
   ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
-  ctx.fillText(text, px + padX, py + pillH * 0.52 + 1);
-  ctx.fillStyle = "rgba(255, 255, 255, 0.96)";
-  ctx.fillText(text, px + padX, py + pillH * 0.52);
+  ctx.fillText(display, px + padX, py + pillH * 0.52 + 1);
+  ctx.fillStyle = textColor;
+  ctx.fillText(display, px + padX, py + pillH * 0.52);
   ctx.restore();
 }
 
@@ -518,21 +688,34 @@ function mapSourceToCanvas(sx, sy, srcCx, srcCy, dstCx, dstCy, totalScale, rotRa
 }
 
 /**
- * Portrait Depth-of-Field Background Bokeh Blur:
- * Keeps the locked subject (pose silhouette / face / object) razor sharp while applying
- * creamy optical bokeh blur to the surrounding background.
+ * Portrait Depth-of-Field Background Bokeh Blur (Subject-Protected):
+ * Keeps 100% of the locked subject (full bbox + head/hair + torso + all skeleton limbs)
+ * completely sharp (alpha=1.0 core) and starts soft optical bokeh feathering strictly
+ * OUTSIDE the subject silhouette so blur never bleeds onto hair, arms, or edges.
  */
 function applySubjectDepthOfField(targetCanvas, item, settings, dstCx, dstCy, totalScale, rotRad) {
   if (!settings.bgBokeh) return;
   const strength = Math.max(0.15, Math.min(1.0, Number(settings.bgBokehStrength) || 0.6));
+  const focusScale = Math.max(0.75, Math.min(1.6, Number(settings.bgBokehSize) || 1.12));
   const cw = targetCanvas.width;
   const ch = targetCanvas.height;
 
-  // 1. Create softly blurred full-frame bokeh layer via multi-step downscale/upscale (zero Safari filter quirks)
-  const blurScale = Math.max(0.045, 0.24 - strength * 0.17);
-  const bw = Math.max(28, Math.round(cw * blurScale));
-  const bh = Math.max(28, Math.round(ch * blurScale));
+  // 1. Two-stage downscale -> upscale for creamy optical bokeh (Safari/Firefox/Chrome consistent)
+  const midW = Math.max(64, Math.round(cw * 0.35));
+  const midH = Math.max(64, Math.round(ch * 0.35));
+  if (!bokehMidCanvas || bokehMidCanvas.width !== midW || bokehMidCanvas.height !== midH) {
+    bokehMidCanvas = document.createElement("canvas");
+    bokehMidCanvas.width = midW;
+    bokehMidCanvas.height = midH;
+    bokehMidCtx = bokehMidCanvas.getContext("2d");
+  }
+  bokehMidCtx.imageSmoothingEnabled = true;
+  bokehMidCtx.imageSmoothingQuality = "high";
+  bokehMidCtx.drawImage(targetCanvas, 0, 0, midW, midH);
 
+  const blurScale = Math.max(0.055, 0.25 - strength * 0.165);
+  const bw = Math.max(32, Math.round(cw * blurScale));
+  const bh = Math.max(32, Math.round(ch * blurScale));
   if (!bokehTinyCanvas || bokehTinyCanvas.width !== bw || bokehTinyCanvas.height !== bh) {
     bokehTinyCanvas = document.createElement("canvas");
     bokehTinyCanvas.width = bw;
@@ -541,7 +724,7 @@ function applySubjectDepthOfField(targetCanvas, item, settings, dstCx, dstCy, to
   }
   bokehTinyCtx.imageSmoothingEnabled = true;
   bokehTinyCtx.imageSmoothingQuality = "high";
-  bokehTinyCtx.drawImage(targetCanvas, 0, 0, bw, bh);
+  bokehTinyCtx.drawImage(bokehMidCanvas, 0, 0, midW, midH, 0, 0, bw, bh);
 
   if (!bokehBlurCanvas || bokehBlurCanvas.width !== cw || bokehBlurCanvas.height !== ch) {
     bokehBlurCanvas = document.createElement("canvas");
@@ -553,29 +736,32 @@ function applySubjectDepthOfField(targetCanvas, item, settings, dstCx, dstCy, to
   bokehBlurCtx.imageSmoothingQuality = "high";
   bokehBlurCtx.drawImage(bokehTinyCanvas, 0, 0, bw, bh, 0, 0, cw, ch);
 
-  // 2. Build soft feathered foreground focus mask around the locked subject
-  if (!bokehMaskCanvas || bokehMaskCanvas.width !== cw || bokehMaskCanvas.height !== ch) {
-    bokehMaskCanvas = document.createElement("canvas");
-    bokehMaskCanvas.width = cw;
-    bokehMaskCanvas.height = ch;
-    bokehMaskCtx = bokehMaskCanvas.getContext("2d");
+  // 2. Draw 100% SOLID opaque subject protection silhouette onto bokehSolidCanvas
+  if (!bokehSolidCanvas || bokehSolidCanvas.width !== cw || bokehSolidCanvas.height !== ch) {
+    bokehSolidCanvas = document.createElement("canvas");
+    bokehSolidCanvas.width = cw;
+    bokehSolidCanvas.height = ch;
+    bokehSolidCtx = bokehSolidCanvas.getContext("2d");
   }
-  bokehMaskCtx.clearRect(0, 0, cw, ch);
+  bokehSolidCtx.clearRect(0, 0, cw, ch);
+  bokehSolidCtx.fillStyle = "#ffffff";
+  bokehSolidCtx.strokeStyle = "#ffffff";
+  bokehSolidCtx.lineCap = "round";
+  bokehSolidCtx.lineJoin = "round";
 
-  const drawSoftBlob = (cx, cy, rx, ry) => {
-    const maxR = Math.max(12, Math.max(rx, ry));
-    bokehMaskCtx.save();
-    bokehMaskCtx.translate(cx, cy);
-    bokehMaskCtx.scale(rx / maxR, ry / maxR);
-    const grad = bokehMaskCtx.createRadialGradient(0, 0, maxR * 0.42, 0, 0, maxR);
-    grad.addColorStop(0, "rgba(255,255,255,1)");
-    grad.addColorStop(0.68, "rgba(255,255,255,0.92)");
-    grad.addColorStop(1, "rgba(255,255,255,0)");
-    bokehMaskCtx.fillStyle = grad;
-    bokehMaskCtx.beginPath();
-    bokehMaskCtx.arc(0, 0, maxR, 0, Math.PI * 2);
-    bokehMaskCtx.fill();
-    bokehMaskCtx.restore();
+  const drawSolidEllipse = (cx, cy, rx, ry) => {
+    bokehSolidCtx.beginPath();
+    bokehSolidCtx.ellipse(cx, cy, Math.max(6, rx), Math.max(6, ry), 0, 0, Math.PI * 2);
+    bokehSolidCtx.fill();
+  };
+
+  const drawLimbCapsule = (pA, pB, thickness) => {
+    if (!pA || !pB) return;
+    bokehSolidCtx.lineWidth = Math.max(10, thickness);
+    bokehSolidCtx.beginPath();
+    bokehSolidCtx.moveTo(pA.x, pA.y);
+    bokehSolidCtx.lineTo(pB.x, pB.y);
+    bokehSolidCtx.stroke();
   };
 
   const t = item.transform;
@@ -590,49 +776,113 @@ function applySubjectDepthOfField(targetCanvas, item, settings, dstCx, dstCy, to
     const p2 = mapPt(x2, y2);
     const cx = (p1.x + p2.x) * 0.5;
     const cy = (p1.y + p2.y) * 0.5;
-    const rx = Math.max(30, Math.abs(p2.x - p1.x) * 0.72);
-    const ry = Math.max(30, Math.abs(p2.y - p1.y) * 0.72);
-    drawSoftBlob(cx, cy, rx, ry);
+    const boxW = Math.max(32, Math.abs(p2.x - p1.x) * focusScale);
+    const boxH = Math.max(32, Math.abs(p2.y - p1.y) * focusScale);
+    drawRoundedRectPath(bokehSolidCtx, cx - boxW * 0.5, cy - boxH * 0.5, boxW, boxH, Math.min(boxW, boxH) * 0.24);
+    bokehSolidCtx.fill();
     hasFocusRegion = true;
   } else if (item.candidates && item.candidates[item.selectedCandidate]) {
     const cand = item.candidates[item.selectedCandidate];
     const lm = cand.landmarks || {};
     const [bx1, by1, bx2, by2] = cand.bbox;
-    const bwPx = Math.max(24, (bx2 - bx1) * totalScale);
-    const bhPx = Math.max(40, (by2 - by1) * totalScale);
+    const pTL = mapPt(bx1, by1);
+    const pBR = mapPt(bx2, by2);
+    const bcx = (pTL.x + pBR.x) * 0.5;
+    const bcy = (pTL.y + pBR.y) * 0.5;
+    const bwPx = Math.max(28, Math.abs(pBR.x - pTL.x));
+    const bhPx = Math.max(48, Math.abs(pBR.y - pTL.y));
 
-    // Organic multi-zone portrait matte following head + torso + hips/legs
+    // A) Protective rounded silhouette covering the full detected person bounding box (protects clothes, hair, phone, shoulders!)
+    const coreW = bwPx * (0.96 * focusScale);
+    const coreH = bhPx * (1.02 * focusScale);
+    drawRoundedRectPath(
+      bokehSolidCtx,
+      bcx - coreW * 0.5,
+      bcy - coreH * 0.5,
+      coreW,
+      coreH,
+      Math.min(coreW * 0.36, coreH * 0.2)
+    );
+    bokehSolidCtx.fill();
+
+    // B) Explicit head + hair crown protection
     const face = getCandidateFaceCenterAndSize(cand);
     if (face) {
-      const fp = mapPt(face.cx, face.cy);
-      drawSoftBlob(fp.x, fp.y, face.w * totalScale * 0.92, face.h * totalScale * 0.95);
+      const fp = mapPt(face.cx, face.cy - face.h * 0.12);
+      drawSolidEllipse(fp.x, fp.y, face.w * totalScale * 0.9 * focusScale, face.h * totalScale * 1.05 * focusScale);
     }
-    if (lm.neck && lm.root) {
-      const np = mapPt(lm.neck.x, lm.neck.y);
-      const rp = mapPt(lm.root.x, lm.root.y);
-      const torsoLen = Math.hypot(np.x - rp.x, np.y - rp.y);
-      const shWidth =
-        lm.left_shoulder && lm.right_shoulder
-          ? Math.hypot(lm.left_shoulder.x - lm.right_shoulder.x, lm.left_shoulder.y - lm.right_shoulder.y) * totalScale
-          : bwPx * 0.55;
-      // Upper chest & shoulders
-      drawSoftBlob((np.x + rp.x) * 0.5, (np.y + rp.y) * 0.48, shWidth * 0.92, torsoLen * 0.85);
-      // Hips & legs (extend below root smoothly)
-      drawSoftBlob(rp.x, rp.y + torsoLen * 0.65, shWidth * 0.78, torsoLen * 1.15);
-    } else {
-      const p1 = mapPt(bx1, by1);
-      const p2 = mapPt(bx2, by2);
-      drawSoftBlob((p1.x + p2.x) * 0.5, (p1.y + p2.y) * 0.5, bwPx * 0.68, bhPx * 0.68);
-    }
+
+    // C) Explicit skeleton limb capsules so raised arms, elbows, hands & wide stances stay 100% razor sharp!
+    const limbW = Math.max(18, bwPx * 0.24 * focusScale);
+    const kp = (name) => (lm[name] ? mapPt(lm[name].x, lm[name].y) : null);
+    const lSh = kp("left_shoulder");
+    const rSh = kp("right_shoulder");
+    const lEl = kp("left_elbow");
+    const rEl = kp("right_elbow");
+    const lWr = kp("left_wrist");
+    const rWr = kp("right_wrist");
+    const lHip = kp("left_hip");
+    const rHip = kp("right_hip");
+    const lKn = kp("left_knee");
+    const rKn = kp("right_knee");
+    const lAn = kp("left_ankle");
+    const rAn = kp("right_ankle");
+
+    drawLimbCapsule(lSh, lEl, limbW);
+    drawLimbCapsule(lEl, lWr, limbW * 0.9);
+    drawLimbCapsule(rSh, rEl, limbW);
+    drawLimbCapsule(rEl, rWr, limbW * 0.9);
+    drawLimbCapsule(lHip, lKn, limbW * 1.15);
+    drawLimbCapsule(lKn, lAn, limbW);
+    drawLimbCapsule(rHip, rKn, limbW * 1.15);
+    drawLimbCapsule(rKn, rAn, limbW);
+    drawLimbCapsule(lSh, rSh, limbW * 1.3);
+    drawLimbCapsule(lHip, rHip, limbW * 1.3);
+
+    hasFocusRegion = true;
+  } else if (mode === "points" && item.customPoints && item.customPoints.length === 2) {
+    const pA = mapPt(item.customPoints[0].x, item.customPoints[0].y);
+    const pB = mapPt(item.customPoints[1].x, item.customPoints[1].y);
+    const span = Math.max(40, Math.hypot(pB.x - pA.x, pB.y - pA.y));
+    drawLimbCapsule(pA, pB, span * 0.95 * focusScale);
     hasFocusRegion = true;
   }
 
   if (!hasFocusRegion) {
-    // Graceful center portrait falloff for 2-point / fallback mode
-    drawSoftBlob(dstCx, dstCy, Math.min(cw, ch) * 0.42, Math.min(cw, ch) * 0.52);
+    drawSolidEllipse(dstCx, dstCy, Math.min(cw, ch) * 0.36 * focusScale, Math.min(cw, ch) * 0.45 * focusScale);
   }
 
-  // 3. Cut out sharp subject area from bokehBlurCanvas (destination-out) and composite blurred background on top!
+  // 3. Build outward-only feathered mask:
+  //    (a) Downscale/upscale bokehSolidCanvas to create a soft outer halo transition
+  //    (b) Stamp bokehSolidCanvas (100% solid white) directly ON TOP so interior alpha is strictly 1.000!
+  if (!bokehMaskCanvas || bokehMaskCanvas.width !== cw || bokehMaskCanvas.height !== ch) {
+    bokehMaskCanvas = document.createElement("canvas");
+    bokehMaskCanvas.width = cw;
+    bokehMaskCanvas.height = ch;
+    bokehMaskCtx = bokehMaskCanvas.getContext("2d");
+  }
+  const fw = Math.max(36, Math.round(cw * 0.08));
+  const fh = Math.max(36, Math.round(ch * 0.08));
+  if (!bokehFeatherTinyCanvas || bokehFeatherTinyCanvas.width !== fw || bokehFeatherTinyCanvas.height !== fh) {
+    bokehFeatherTinyCanvas = document.createElement("canvas");
+    bokehFeatherTinyCanvas.width = fw;
+    bokehFeatherTinyCanvas.height = fh;
+    bokehFeatherTinyCtx = bokehFeatherTinyCanvas.getContext("2d");
+  }
+  bokehFeatherTinyCtx.clearRect(0, 0, fw, fh);
+  bokehFeatherTinyCtx.imageSmoothingEnabled = true;
+  bokehFeatherTinyCtx.imageSmoothingQuality = "high";
+  bokehFeatherTinyCtx.drawImage(bokehSolidCanvas, 0, 0, cw, ch, 0, 0, fw, fh);
+
+  bokehMaskCtx.clearRect(0, 0, cw, ch);
+  bokehMaskCtx.imageSmoothingEnabled = true;
+  bokehMaskCtx.imageSmoothingQuality = "high";
+  // Soft outer halo feather
+  bokehMaskCtx.drawImage(bokehFeatherTinyCanvas, 0, 0, fw, fh, 0, 0, cw, ch);
+  // 100% solid inner subject protection core (zero blur bleed onto subject!)
+  bokehMaskCtx.drawImage(bokehSolidCanvas, 0, 0);
+
+  // 4. Cut out protected sharp subject from bokehBlurCanvas and composite ONLY background blur on top
   bokehBlurCtx.save();
   bokehBlurCtx.globalCompositeOperation = "destination-out";
   bokehBlurCtx.drawImage(bokehMaskCanvas, 0, 0);

@@ -13,7 +13,13 @@ import {
   trackSelectedPersonAcrossBatch,
 } from "./aligner.js";
 import { computeBatchColorTarget, computePhotoColorStats } from "./color.js";
-import { getCanvasSize, renderAlignedToCanvas, renderComparisonCanvas, renderGridPosterCanvas } from "./renderer.js";
+import {
+  LABEL_THEME_PRESETS,
+  getCanvasSize,
+  renderAlignedToCanvas,
+  renderComparisonCanvas,
+  renderGridPosterCanvas,
+} from "./renderer.js";
 import { exportGifLocal, exportTimelapseLocal, exportWipeVideoLocal } from "./exporter.js";
 import { LocalAudioManager, computeTappedBpm } from "./audio.js";
 import { generateDemoItems } from "./demo.js";
@@ -32,6 +38,7 @@ const DEFAULT_SETTINGS = {
   fillMode: "blur",
   bgBokeh: false,
   bgBokehStrength: 0.6,
+  bgBokehSize: 1.12,
   autoColorMatch: false,
   colorMatchStrength: 0.65,
   selfMask: "none", // "none" | "emoji" | "blur" | "mosaic"
@@ -42,6 +49,14 @@ const DEFAULT_SETTINGS = {
   showWatermark: true,
   labelTheme: "pill", // "pill" | "magazine" | "minimal" | "film" | "sports"
   magazineTitle: "EACHDAY",
+  labelFont: "sans",
+  labelSize: 1.0,
+  labelColor: "#ffffff",
+  labelAccent: "#3b82f6",
+  labelBgStyle: "glass",
+  labelBgOpacity: 0.64,
+  labelUppercase: false,
+  labelTracking: 0,
   watermarkStyle: "day_date", // "day_date" | "count_date" | "date_only" | "day_only" | "custom" | "template"
   labelTemplate: "Day {n2} · {date}",
   customPrefix: "OOTD #",
@@ -55,6 +70,9 @@ const DEFAULT_SETTINGS = {
   holdLastSec: 1.2,
   crossfade: false,
   beatSync: false,
+  beatMode: "onset", // "onset" (real beat-cut) | "bpm" (uniform BPM)
+  beatSensitivity: 0.55,
+  bgmStartSec: 0,
   bpm: 120,
   beatDiv: 1,
   bgmVolume: 0.8,
@@ -91,7 +109,11 @@ const state = {
   showOnion: false,
   drawBoxMode: false,
   playing: false,
+  auditioningBgm: false,
   playTimer: null,
+  playRafId: null,
+  auditionRafId: null,
+  styleEditorOpen: false,
   lastExportUrl: null,
   lastCompareUrl: null,
   lastPosterUrl: null,
@@ -264,6 +286,8 @@ function syncSettingsUI() {
   $("bokehStrengthRow").classList.toggle("hidden", !s.bgBokeh);
   $("rngBokehStrength").value = s.bgBokehStrength;
   $("valBokehStrength").textContent = `${Math.round(s.bgBokehStrength * 100)}%`;
+  $("rngBokehSize").value = s.bgBokehSize ?? 1.12;
+  $("valBokehSize").textContent = `${Number(s.bgBokehSize ?? 1.12).toFixed(2)}×`;
 
   $("chkColorMatch").checked = !!s.autoColorMatch;
   $("colorMatchOptions").classList.toggle("hidden", !s.autoColorMatch);
@@ -304,6 +328,18 @@ function syncSettingsUI() {
   if ($("txtMagazineTitle") && document.activeElement !== $("txtMagazineTitle")) {
     $("txtMagazineTitle").value = s.magazineTitle || "EACHDAY";
   }
+  $("styleEditorBox").classList.toggle("hidden", !state.styleEditorOpen);
+  $("selLabelFont").value = s.labelFont || "sans";
+  $("rngLabelSize").value = s.labelSize ?? 1.0;
+  $("valLabelSize").textContent = `${Number(s.labelSize ?? 1.0).toFixed(2)}×`;
+  $("inpLabelColor").value = s.labelColor || "#ffffff";
+  $("inpLabelAccent").value = s.labelAccent || "#3b82f6";
+  setSeg("labelBgStyleGroup", s.labelBgStyle || "glass");
+  $("rngLabelBgOpacity").value = s.labelBgOpacity ?? 0.64;
+  $("valLabelBgOpacity").textContent = `${Math.round((s.labelBgOpacity ?? 0.64) * 100)}%`;
+  $("rngLabelTracking").value = s.labelTracking ?? 0;
+  $("valLabelTracking").textContent = String(s.labelTracking ?? 0);
+  $("chkLabelUppercase").checked = !!s.labelUppercase;
   $("wmPosRow").classList.toggle("hidden", curTheme === "magazine");
   $("selWmStyle").value = s.watermarkStyle;
   $("customLabelBox").classList.toggle("hidden", s.watermarkStyle !== "custom");
@@ -327,14 +363,32 @@ function syncSettingsUI() {
   $("valHold").textContent = `${Number(s.holdLastSec).toFixed(1)} ${t("unitSec")}`;
   $("chkCrossfade").checked = !!s.crossfade;
 
-  // BGM & BPM Sync UI
+  // BGM & Real Beat-Cut ("卡点") UI
   const hasAudio = audioMgr.hasAudio();
   $("bgmChip").classList.toggle("hidden", !hasAudio);
+  $("bgmWaveWrap").classList.toggle("hidden", !hasAudio);
   $("bgmVolRow").classList.toggle("hidden", !hasAudio);
   if (hasAudio) {
     const mins = Math.floor(audioMgr.duration / 60);
     const secs = String(Math.floor(audioMgr.duration % 60)).padStart(2, "0");
-    $("bgmName").textContent = `🎵 ${audioMgr.filename} (${mins}:${secs})`;
+    $("bgmName").textContent = `${audioMgr.filename} (${mins}:${secs})`;
+    const maxStart = Math.max(0, Number((audioMgr.duration - 1).toFixed(1)));
+    const clampedStart = Math.max(0, Math.min(maxStart, Number(s.bgmStartSec) || 0));
+    s.bgmStartSec = clampedStart;
+    $("rngBgmStart").max = String(maxStart);
+    $("rngBgmStart").value = String(clampedStart);
+    $("valBgmStart").textContent = `${clampedStart.toFixed(1)}s`;
+    $("beatStats").textContent = t("beatStatsFmt", audioMgr.beats.length, audioMgr.detectedBpm);
+    audioMgr.renderWaveform(
+      $("beatWaveformCanvas"),
+      clampedStart,
+      audioMgr.isPlaying() ? audioMgr.getTrackPositionSec() : -1
+    );
+  }
+  const audBtn = $("btnAuditionBgm");
+  if (audBtn) {
+    audBtn.classList.toggle("active", state.auditioningBgm);
+    audBtn.textContent = state.auditioningBgm ? t("btnAuditionStop") : t("btnAuditionPlay");
   }
   $("rngBgmVol").value = s.bgmVolume;
   $("valBgmVol").textContent = `${Math.round(s.bgmVolume * 100)}%`;
@@ -342,6 +396,13 @@ function syncSettingsUI() {
 
   $("chkBeatSync").checked = !!s.beatSync;
   $("beatSyncBox").classList.toggle("hidden", !s.beatSync);
+  const beatMode = s.beatMode || "onset";
+  setSeg("beatModeGroup", beatMode);
+  $("onsetControls").classList.toggle("hidden", beatMode !== "onset");
+  $("bpmControls").classList.toggle("hidden", beatMode !== "bpm");
+  $("beatNeedAudioHint").classList.toggle("hidden", hasAudio);
+  $("rngBeatSens").value = s.beatSensitivity ?? 0.55;
+  $("valBeatSens").textContent = `${Math.round((s.beatSensitivity ?? 0.55) * 100)}%`;
   $("numBpm").value = s.bpm;
   document.querySelectorAll("#beatDivGroup .seg-btn").forEach((btn) => {
     btn.classList.toggle("active", Number(btn.dataset.val) === Number(s.beatDiv));
@@ -1341,51 +1402,126 @@ function loadDemoSession() {
   showToast(t("stDemoLoaded"), 4200);
 }
 
-// Live Playback Preview (honors Milestone Extra Hold + synced Local BGM!)
+function stopAuditionBgm() {
+  if (!state.auditioningBgm) return;
+  state.auditioningBgm = false;
+  cancelAnimationFrame(state.auditionRafId);
+  state.auditionRafId = null;
+  if (!state.playing) audioMgr.stop();
+  const audBtn = $("btnAuditionBgm");
+  if (audBtn) {
+    audBtn.classList.remove("active");
+    audBtn.textContent = t("btnAuditionPlay");
+  }
+  if (audioMgr.hasAudio()) {
+    audioMgr.renderWaveform($("beatWaveformCanvas"), state.settings.bgmStartSec || 0, -1);
+  }
+}
+
+function toggleAuditionBgm() {
+  if (!audioMgr.hasAudio()) return;
+  if (state.auditioningBgm) {
+    stopAuditionBgm();
+    return;
+  }
+  stopPlay();
+  state.auditioningBgm = true;
+  const startSec = state.settings.bgmStartSec || 0;
+  audioMgr.setVolume(state.settings.bgmVolume);
+  audioMgr.playLoop(startSec);
+  const audBtn = $("btnAuditionBgm");
+  if (audBtn) {
+    audBtn.classList.add("active");
+    audBtn.textContent = t("btnAuditionStop");
+  }
+  const tickWave = () => {
+    if (!state.auditioningBgm) return;
+    audioMgr.renderWaveform($("beatWaveformCanvas"), state.settings.bgmStartSec || 0, audioMgr.getTrackPositionSec());
+    state.auditionRafId = requestAnimationFrame(tickWave);
+  };
+  tickWave();
+}
+
+// Live Playback Preview (Audio-clock locked for real beat-cut "真卡点" + Milestone Hold!)
 function togglePlay() {
   if (state.playing) {
     stopPlay();
     return;
   }
+  stopAuditionBgm();
   const enabledIndices = state.items.map((it, i) => (it.enabled ? i : -1)).filter((i) => i >= 0);
   if (enabledIndices.length < 2) {
     showToast(t("errNeed2"));
     return;
   }
 
+  const enabledItems = enabledIndices.map((i) => state.items[i]);
+  const schedule = audioMgr.buildPhotoSchedule(enabledItems, state.settings);
+  const totalDur = Math.max(0.2, schedule.totalDurationSec);
+
   state.playing = true;
   $("btnPlay").classList.add("active");
   $("btnPlay").textContent = t("btnPause");
   $("onionCanvas").classList.add("hidden");
-  if (audioMgr.hasAudio()) audioMgr.playLoop(0);
 
-  let pos = Math.max(0, enabledIndices.indexOf(state.selectedIndex));
-  const baseMs = Math.round(1000 / Math.max(1, state.settings.fps));
+  const startOffsetSec = state.settings.bgmStartSec || 0;
+  const hasBgm = audioMgr.hasAudio();
+  if (hasBgm) {
+    audioMgr.setVolume(state.settings.bgmVolume);
+    audioMgr.playLoop(startOffsetSec);
+  }
 
-  const scheduleNext = () => {
-    if (!state.playing) return;
-    const idx = enabledIndices[pos];
-    state.selectedIndex = idx;
-    const item = state.items[idx];
-    const info = getEnabledSequenceInfo(item.id);
-    renderAlignedToCanvas($("previewCanvas"), item, state.settings, {
-      seqIndex: info.seqIndex,
-      totalEnabled: info.totalEnabled,
-      firstTimestamp: info.firstTimestamp,
-      drawGuides: false,
-      lang: state.lang,
-      batchColorTarget: state.batchColorTarget,
-      customStickerImg: state.customStickerImg,
-    });
-    const starMark = item.milestone ? " ★" : "";
-    $("stageCounter").textContent = `▶ ${pos + 1} / ${enabledIndices.length} · ${item.dateStr}${starMark}`;
+  const startPos = Math.max(0, enabledIndices.indexOf(state.selectedIndex));
+  // In real beat-cut mode with BGM, start cleanly from frame 0 so frame cuts align 1:1 with music beats!
+  const initialTimeOffset = hasBgm && schedule.mode === "onset" ? 0 : schedule.startTimesSec[startPos] || 0;
+  const fallbackStartPerf = performance.now();
+  let lastRenderedPos = -1;
 
-    const delay = baseMs + (item.milestone ? Math.round((Number(state.settings.milestoneHoldSec) || 0.8) * 1000) : 0);
-    pos = (pos + 1) % enabledIndices.length;
-    state.playTimer = setTimeout(scheduleNext, delay);
+  const findPosForTime = (tSec) => {
+    const tMod = ((tSec % totalDur) + totalDur) % totalDur;
+    let lo = 0;
+    let hi = schedule.startTimesSec.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (schedule.startTimesSec[mid] <= tMod) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
   };
 
-  scheduleNext();
+  const renderLoop = () => {
+    if (!state.playing) return;
+    const elapsedSec = hasBgm ? audioMgr.getPlaybackTime() : (performance.now() - fallbackStartPerf) / 1000;
+    const pos = findPosForTime(initialTimeOffset + elapsedSec);
+
+    if (pos !== lastRenderedPos) {
+      lastRenderedPos = pos;
+      const idx = enabledIndices[pos];
+      state.selectedIndex = idx;
+      const item = state.items[idx];
+      const info = getEnabledSequenceInfo(item.id);
+      renderAlignedToCanvas($("previewCanvas"), item, state.settings, {
+        seqIndex: info.seqIndex,
+        totalEnabled: info.totalEnabled,
+        firstTimestamp: info.firstTimestamp,
+        drawGuides: false,
+        lang: state.lang,
+        batchColorTarget: state.batchColorTarget,
+        customStickerImg: state.customStickerImg,
+      });
+      const starMark = item.milestone ? " ★" : "";
+      const beatBadge = schedule.mode === "onset" ? " 🥁" : "";
+      $("stageCounter").textContent = `▶ ${pos + 1} / ${enabledIndices.length} · ${item.dateStr}${starMark}${beatBadge}`;
+    }
+
+    if (hasBgm) {
+      audioMgr.renderWaveform($("beatWaveformCanvas"), startOffsetSec, audioMgr.getTrackPositionSec());
+    }
+
+    state.playRafId = requestAnimationFrame(renderLoop);
+  };
+
+  renderLoop();
 }
 
 function stopPlay() {
@@ -1393,9 +1529,14 @@ function stopPlay() {
   state.playing = false;
   clearTimeout(state.playTimer);
   state.playTimer = null;
+  cancelAnimationFrame(state.playRafId);
+  state.playRafId = null;
   audioMgr.stop();
   $("btnPlay").classList.remove("active");
   $("btnPlay").textContent = t("btnPlay");
+  if (audioMgr.hasAudio()) {
+    audioMgr.renderWaveform($("beatWaveformCanvas"), state.settings.bgmStartSec || 0, -1);
+  }
   selectIndex(state.selectedIndex);
 }
 
@@ -1520,17 +1661,23 @@ function openExportResultModal(blob, filename, kind = "video") {
   return sizeMb;
 }
 
-// Local MP4 Export (with optional Local BGM AAC Audio!)
+// Local MP4 Export (with optional Local BGM AAC Audio + Real Beat-Cut Schedule!)
 async function handleExport() {
-  if (state.busy || !state.items.some((it) => it.enabled)) return;
+  const enabled = state.items.filter((it) => it.enabled);
+  if (state.busy || !enabled.length) return;
   stopPlay();
+  stopAuditionBgm();
   state.busy = true;
   updateWorkspaceVisibility();
 
   try {
-    const audioOpts = audioMgr.hasAudio()
-      ? { audioBuffer: audioMgr.audioBuffer, volume: state.settings.bgmVolume }
-      : null;
+    const schedule = audioMgr.buildPhotoSchedule(enabled, state.settings);
+    const audioOpts = {
+      audioBuffer: audioMgr.hasAudio() ? audioMgr.audioBuffer : null,
+      volume: state.settings.bgmVolume,
+      startOffsetSec: state.settings.bgmStartSec || 0,
+      photoDurationsSec: schedule.mode === "onset" || schedule.mode === "bpm" ? schedule.durationsSec : null,
+    };
 
     const { blob, ext } = await exportTimelapseLocal(
       state.items,
@@ -1569,6 +1716,9 @@ async function handleExportGif() {
   updateWorkspaceVisibility();
 
   try {
+    const enabled = state.items.filter((it) => it.enabled);
+    const schedule = audioMgr.buildPhotoSchedule(enabled, state.settings);
+    const customDurs = schedule.mode === "onset" || schedule.mode === "bpm" ? schedule.durationsSec : null;
     const { blob } = await exportGifLocal(
       state.items,
       state.settings,
@@ -1581,7 +1731,8 @@ async function handleExportGif() {
         } else {
           setStatus(true, t("stExportingGif", cur, tot), Math.round((cur / tot) * 95));
         }
-      }
+      },
+      customDurs
     );
     const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "").slice(0, 14);
     const sizeMb = openExportResultModal(blob, `eachday_${stamp}.gif`, "gif");
@@ -1610,7 +1761,11 @@ async function handleExportWipeVideo() {
 
   try {
     const audioOpts = audioMgr.hasAudio()
-      ? { audioBuffer: audioMgr.audioBuffer, volume: state.settings.bgmVolume }
+      ? {
+          audioBuffer: audioMgr.audioBuffer,
+          volume: state.settings.bgmVolume,
+          startOffsetSec: state.settings.bgmStartSec || 0,
+        }
       : null;
 
     const { blob } = await exportWipeVideoLocal(
@@ -1913,29 +2068,93 @@ function bindEvents() {
   $("selCmpLeft").addEventListener("change", updateComparePreview);
   $("selCmpRight").addEventListener("change", updateComparePreview);
 
-  // Local BGM Audio & BPM Beat-Sync
+  // Local BGM Audio, Audition & Real Musical Beat-Cut ("真卡点")
   $("audioInput").addEventListener("change", async (e) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    stopPlay();
+    stopAuditionBgm();
     try {
+      audioMgr.lastSensitivity = state.settings.beatSensitivity ?? 0.55;
       const info = await audioMgr.loadFile(file);
+      state.settings.bgmStartSec = 0;
+      state.settings.bpm = info.detectedBpm || state.settings.bpm;
+      state.settings.beatSync = true;
+      state.settings.beatMode = "onset";
+      persistSettings(state.settings);
       syncSettingsUI();
-      showToast(t("stAudioLoaded", info.filename), 3200);
-    } catch {
+      showToast(t("stAudioLoaded", info.filename, info.beatCount, info.detectedBpm), 3800);
+    } catch (err) {
+      console.error("Audio load error:", err);
       showToast(`❌ ${t("errAudioLoad")}`, 3800);
     }
   });
+  $("btnAuditionBgm").addEventListener("click", toggleAuditionBgm);
   $("btnClearBgm").addEventListener("click", () => {
+    stopAuditionBgm();
     audioMgr.clear();
+    state.settings.bgmStartSec = 0;
+    persistSettings(state.settings);
     syncSettingsUI();
+  });
+  $("beatWaveformCanvas").addEventListener("click", (e) => {
+    if (!audioMgr.hasAudio()) return;
+    const rect = $("beatWaveformCanvas").getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(0.98, (e.clientX - rect.left) / Math.max(1, rect.width)));
+    const nextStart = Number((ratio * audioMgr.duration).toFixed(1));
+    updateGlobalSetting({ bgmStartSec: nextStart }, false);
+    if (state.auditioningBgm) {
+      audioMgr.playLoop(nextStart);
+    } else if (state.playing) {
+      stopPlay();
+      togglePlay();
+    }
+  });
+  $("rngBgmStart").addEventListener("input", (e) => {
+    const nextStart = parseFloat(e.target.value) || 0;
+    updateGlobalSetting({ bgmStartSec: nextStart }, false);
+  });
+  $("rngBgmStart").addEventListener("change", () => {
+    if (state.auditioningBgm) audioMgr.playLoop(state.settings.bgmStartSec || 0);
+    else if (state.playing) {
+      stopPlay();
+      togglePlay();
+    }
   });
   $("rngBgmVol").addEventListener("input", (e) => {
     updateGlobalSetting({ bgmVolume: parseFloat(e.target.value) }, false);
   });
   $("chkBeatSync").addEventListener("change", (e) => {
     updateGlobalSetting({ beatSync: e.target.checked }, false);
-    if (e.target.checked) applyBpmToFps();
+    if (e.target.checked && state.settings.beatMode === "bpm") applyBpmToFps();
+    if (state.playing) {
+      stopPlay();
+      togglePlay();
+    }
+  });
+  document.querySelectorAll("#beatModeGroup .seg-btn").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      updateGlobalSetting({ beatMode: btn.dataset.val }, false);
+      if (btn.dataset.val === "bpm") applyBpmToFps();
+      if (state.playing) {
+        stopPlay();
+        togglePlay();
+      }
+    })
+  );
+  $("rngBeatSens").addEventListener("input", (e) => {
+    const sens = parseFloat(e.target.value) || 0.55;
+    state.settings.beatSensitivity = sens;
+    if (audioMgr.hasAudio()) audioMgr.detectBeats(sens);
+    persistSettings(state.settings);
+    syncSettingsUI();
+  });
+  $("rngBeatSens").addEventListener("change", () => {
+    if (state.playing) {
+      stopPlay();
+      togglePlay();
+    }
   });
   $("numBpm").addEventListener("input", (e) => {
     const val = Math.max(50, Math.min(220, Number(e.target.value) || 120));
@@ -1954,6 +2173,7 @@ function bindEvents() {
     if (bpm) {
       state.settings.bpm = bpm;
       state.settings.beatSync = true;
+      state.settings.beatMode = "bpm";
       persistSettings(state.settings);
       syncSettingsUI();
       applyBpmToFps();
@@ -1964,7 +2184,11 @@ function bindEvents() {
       state.settings.beatDiv = Number(btn.dataset.val) || 1;
       persistSettings(state.settings);
       syncSettingsUI();
-      applyBpmToFps();
+      if (state.settings.beatMode === "bpm") applyBpmToFps();
+      if (state.playing) {
+        stopPlay();
+        togglePlay();
+      }
     })
   );
 
@@ -2089,6 +2313,10 @@ function bindEvents() {
     updateGlobalSetting({ bgBokehStrength: parseFloat(e.target.value) }, false)
   );
   $("rngBokehStrength").addEventListener("change", () => state.items.length && renderFilmstrip());
+  $("rngBokehSize").addEventListener("input", (e) =>
+    updateGlobalSetting({ bgBokehSize: parseFloat(e.target.value) }, false)
+  );
+  $("rngBokehSize").addEventListener("change", () => state.items.length && renderFilmstrip());
 
   // Auto Exposure & Color Match
   $("chkColorMatch").addEventListener("change", (e) => {
@@ -2214,10 +2442,47 @@ function bindEvents() {
   $("rngVShift").addEventListener("change", () => state.items.length && renderFilmstrip());
   $("chkAutoLevel").addEventListener("change", (e) => updateGlobalSetting({ autoLevel: e.target.checked }, true));
 
-  // Watermark & Progress Bar
+  // Watermark & Progress Bar + Editable Visual Style
   $("chkWatermark").addEventListener("change", (e) => updateGlobalSetting({ showWatermark: e.target.checked }, false));
   document.querySelectorAll("#labelThemeGroup .seg-btn").forEach((btn) =>
-    btn.addEventListener("click", () => updateGlobalSetting({ labelTheme: btn.dataset.val }, false))
+    btn.addEventListener("click", () => {
+      const theme = btn.dataset.val;
+      const preset = LABEL_THEME_PRESETS[theme] || LABEL_THEME_PRESETS.pill;
+      updateGlobalSetting({ labelTheme: theme, ...preset }, false);
+    })
+  );
+  $("btnToggleStyleEditor").addEventListener("click", () => {
+    state.styleEditorOpen = !state.styleEditorOpen;
+    $("styleEditorBox").classList.toggle("hidden", !state.styleEditorOpen);
+  });
+  $("btnResetStyle").addEventListener("click", () => {
+    const theme = state.settings.labelTheme || "pill";
+    const preset = LABEL_THEME_PRESETS[theme] || LABEL_THEME_PRESETS.pill;
+    updateGlobalSetting({ ...preset }, false);
+  });
+  $("selLabelFont").addEventListener("change", (e) => updateGlobalSetting({ labelFont: e.target.value }, false));
+  $("rngLabelSize").addEventListener("input", (e) =>
+    updateGlobalSetting({ labelSize: parseFloat(e.target.value) }, false)
+  );
+  $("inpLabelColor").addEventListener("input", (e) => updateGlobalSetting({ labelColor: e.target.value }, false));
+  document.querySelectorAll(".color-swatch").forEach((btn) =>
+    btn.addEventListener("click", () => updateGlobalSetting({ labelColor: btn.dataset.color }, false))
+  );
+  $("inpLabelAccent").addEventListener("input", (e) => updateGlobalSetting({ labelAccent: e.target.value }, false));
+  document.querySelectorAll(".accent-swatch").forEach((btn) =>
+    btn.addEventListener("click", () => updateGlobalSetting({ labelAccent: btn.dataset.accent }, false))
+  );
+  document.querySelectorAll("#labelBgStyleGroup .seg-btn").forEach((btn) =>
+    btn.addEventListener("click", () => updateGlobalSetting({ labelBgStyle: btn.dataset.val }, false))
+  );
+  $("rngLabelBgOpacity").addEventListener("input", (e) =>
+    updateGlobalSetting({ labelBgOpacity: parseFloat(e.target.value) }, false)
+  );
+  $("rngLabelTracking").addEventListener("input", (e) =>
+    updateGlobalSetting({ labelTracking: parseInt(e.target.value, 10) || 0 }, false)
+  );
+  $("chkLabelUppercase").addEventListener("change", (e) =>
+    updateGlobalSetting({ labelUppercase: e.target.checked }, false)
   );
   $("txtMagazineTitle").addEventListener("input", (e) =>
     updateGlobalSetting({ magazineTitle: e.target.value }, false)

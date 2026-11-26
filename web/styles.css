@@ -88,9 +88,105 @@ html, body {
 }
 
 .bgm-chip span {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.audition-btn {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(59, 130, 246, 0.45);
+  background: rgba(59, 130, 246, 0.22);
+  color: #dbeafe;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.audition-btn:hover {
+  background: rgba(59, 130, 246, 0.36);
+}
+
+.audition-btn.active {
+  background: rgba(239, 68, 68, 0.28);
+  border-color: rgba(248, 113, 113, 0.55);
+  color: #fecaca;
+}
+
+.waveform-canvas {
+  width: 100%;
+  height: 44px;
+  display: block;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.beat-stats-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #6ee7b7;
+}
+
+.beat-stats-row .small-label {
+  color: #6ee7b7;
+  font-weight: 500;
+}
+
+.color-picker-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.color-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.color-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.color-input-wrap input[type="color"] {
+  width: 30px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.swatch-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.color-swatch,
+.accent-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.35);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.12s;
+}
+
+.color-swatch:hover,
+.accent-swatch:hover {
+  transform: scale(1.16);
+  border-color: #ffffff;
 }
 
 .bpm-row {

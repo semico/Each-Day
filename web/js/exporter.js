@@ -48,10 +48,10 @@ async function pickAacConfig(sampleRate = 48000, numberOfChannels = 2) {
 }
 
 /**
- * Render an AudioBuffer (looped/trimmed to `durationSec`, resampled to 48kHz stereo with 0.6s fade-out)
- * and feed it through WebCodecs AudioEncoder into `muxer`.
+ * Render an AudioBuffer (starting at `startOffsetSec`, looped/trimmed to `durationSec`,
+ * resampled to 48kHz stereo with 0.65s fade-out) and feed it through WebCodecs AudioEncoder.
  */
-async function encodeBgmAudioTrack(muxer, audioBuffer, durationSec, volume = 0.8) {
+async function encodeBgmAudioTrack(muxer, audioBuffer, durationSec, volume = 0.8, startOffsetSec = 0) {
   const sampleRate = 48000;
   const numChannels = 2;
   const aacCfg = await pickAacConfig(sampleRate, numChannels);
@@ -61,7 +61,10 @@ async function encodeBgmAudioTrack(muxer, audioBuffer, durationSec, volume = 0.8
   const offline = new OfflineAudioContext(numChannels, totalSamples, sampleRate);
   const src = offline.createBufferSource();
   src.buffer = audioBuffer;
+  const offset = Math.max(0, Math.min(Math.max(0, audioBuffer.duration - 0.2), Number(startOffsetSec) || 0));
   src.loop = true;
+  src.loopStart = offset;
+  src.loopEnd = audioBuffer.duration;
 
   const gain = offline.createGain();
   const vol = Math.max(0.01, Math.min(1, Number(volume) || 0.8));
@@ -72,7 +75,7 @@ async function encodeBgmAudioTrack(muxer, audioBuffer, durationSec, volume = 0.8
 
   src.connect(gain);
   gain.connect(offline.destination);
-  src.start(0);
+  src.start(0, offset);
 
   const rendered = await offline.startRendering();
   const ch0 = rendered.getChannelData(0);
@@ -172,11 +175,13 @@ async function exportWithWebCodecs(
   encoder.configure(encoderConfig);
 
   const photoFps = Math.max(1, Math.min(20, Number(settings.fps) || 6));
-  const framesPerPhoto = Math.max(1, Math.round(streamFps / photoFps));
-  const blendFrames =
-    settings.crossfade && framesPerPhoto >= 3 ? Math.max(1, Math.min(Math.floor(framesPerPhoto / 2), 4)) : 0;
+  const defaultFramesPerPhoto = Math.max(1, Math.round(streamFps / photoFps));
   const milestoneExtraFrames = Math.max(0, Math.round((Number(settings.milestoneHoldSec) || 0.8) * streamFps));
   const holdExtraFrames = Math.max(0, Math.round((Number(settings.holdLastSec) || 0) * streamFps));
+  const customDurations =
+    audioOptions && Array.isArray(audioOptions.photoDurationsSec) && audioOptions.photoDurationsSec.length === enabledItems.length
+      ? audioOptions.photoDurationsSec
+      : null;
 
   const currCanvas = makeCanvas(width, height);
   const prevCanvas = makeCanvas(width, height);
@@ -186,6 +191,7 @@ async function exportWithWebCodecs(
   const totalEnabled = enabledItems.length;
   const frameDurationUs = Math.round(1_000_000 / streamFps);
   let frameIndex = 0;
+  let cumEndSec = 0;
 
   const encodeCanvas = async (srcCanvas, repeatCount = 1) => {
     for (let r = 0; r < repeatCount; r++) {
@@ -218,16 +224,28 @@ async function exportWithWebCodecs(
       customStickerImg,
     });
 
-    const extraMilestone = item.milestone ? milestoneExtraFrames : 0;
+    // Cumulative target frame calculation guarantees zero drift against real musical beat timestamps!
+    let targetFramesForPhoto;
+    if (customDurations) {
+      cumEndSec += Math.max(0.06, customDurations[i]);
+      targetFramesForPhoto = Math.max(1, Math.round(cumEndSec * streamFps) - frameIndex);
+    } else {
+      targetFramesForPhoto = defaultFramesPerPhoto + (item.milestone ? milestoneExtraFrames : 0);
+    }
+
+    const blendFrames =
+      settings.crossfade && targetFramesForPhoto >= 3
+        ? Math.max(1, Math.min(Math.floor(targetFramesForPhoto / 2), 4))
+        : 0;
 
     if (i > 0 && blendFrames > 0) {
       for (let b = 1; b <= blendFrames; b++) {
         blendCanvases(mixCanvas, prevCanvas, currCanvas, b / (blendFrames + 1));
         await encodeCanvas(mixCanvas, 1);
       }
-      await encodeCanvas(currCanvas, Math.max(1, framesPerPhoto - blendFrames) + extraMilestone);
+      await encodeCanvas(currCanvas, Math.max(1, targetFramesForPhoto - blendFrames));
     } else {
-      await encodeCanvas(currCanvas, framesPerPhoto + extraMilestone);
+      await encodeCanvas(currCanvas, targetFramesForPhoto);
     }
 
     prevCanvas.getContext("2d").drawImage(currCanvas, 0, 0);
@@ -247,7 +265,13 @@ async function exportWithWebCodecs(
   if (canEncodeAudio) {
     const totalDurationSec = frameIndex / streamFps;
     try {
-      audioIncluded = await encodeBgmAudioTrack(muxer, audioOptions.audioBuffer, totalDurationSec, audioOptions.volume);
+      audioIncluded = await encodeBgmAudioTrack(
+        muxer,
+        audioOptions.audioBuffer,
+        totalDurationSec,
+        audioOptions.volume,
+        audioOptions.startOffsetSec || 0
+      );
     } catch (err) {
       console.warn("Audio muxing skipped:", err);
     }
@@ -343,7 +367,7 @@ export async function exportTimelapseLocal(
 /**
  * 100% Local In-Browser Animated GIF Exporter via `gifenc` (ideal for GitHub, WeChat, Discord, Notion).
  */
-export async function exportGifLocal(items, settings, lang, batchColorTarget, customStickerImg, onProgress) {
+export async function exportGifLocal(items, settings, lang, batchColorTarget, customStickerImg, onProgress, photoDurationsSec = null) {
   const enabled = items.filter((it) => it.enabled);
   if (!enabled.length) throw new Error("No enabled photos to export.");
 
@@ -364,6 +388,7 @@ export async function exportGifLocal(items, settings, lang, batchColorTarget, cu
   const holdLastMs = Math.round((Number(settings.holdLastSec) || 0) * 1000);
   const firstTs = enabled[0].timestamp;
   const total = enabled.length;
+  const useCustomDur = Array.isArray(photoDurationsSec) && photoDurationsSec.length === total;
 
   for (let i = 0; i < total; i++) {
     const item = enabled[i];
@@ -384,7 +409,9 @@ export async function exportGifLocal(items, settings, lang, batchColorTarget, cu
     const palette = quantize(data, 256);
     const index = applyPalette(data, palette);
 
-    let delay = baseDelayMs + (item.milestone ? milestoneMs : 0);
+    let delay = useCustomDur
+      ? Math.max(40, Math.round(photoDurationsSec[i] * 1000))
+      : baseDelayMs + (item.milestone ? milestoneMs : 0);
     if (i === total - 1) delay += holdLastMs;
 
     gif.writeFrame(index, w, h, { palette, delay, repeat: 0 });
@@ -554,7 +581,13 @@ export async function exportWipeVideoLocal(
 
   if (canEncodeAudio) {
     try {
-      await encodeBgmAudioTrack(muxer, audioOptions.audioBuffer, totalFrames / streamFps, audioOptions.volume);
+      await encodeBgmAudioTrack(
+        muxer,
+        audioOptions.audioBuffer,
+        totalFrames / streamFps,
+        audioOptions.volume,
+        audioOptions.startOffsetSec || 0
+      );
     } catch {
       // fallback silently to video-only
     }
