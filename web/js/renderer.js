@@ -87,8 +87,10 @@ export function formatWatermark(item, seqIndex, totalEnabled, firstTs, settings,
   const stem = (item.filename || "").replace(/\.[^.]+$/, "");
 
   switch (settings.watermarkStyle) {
+    case "none":
+      return "";
     case "template": {
-      const tpl = (settings.labelTemplate || "Day {n2} · {date}").trim();
+      const tpl = (settings.labelTemplate ?? "Day {n2} · {date}").trim();
       if (!tpl) return "";
       return tpl
         .replace(/\{n2\}/gi, seq2)
@@ -105,7 +107,7 @@ export function formatWatermark(item, seqIndex, totalEnabled, firstTs, settings,
         .replace(/\{name\}/gi, stem);
     }
     case "custom": {
-      const prefix = (settings.customPrefix || "Day ").trimEnd();
+      const prefix = (settings.customPrefix ?? "").trimEnd();
       const counter = settings.customUseElapsed ? String(elapsedDays) : seq2;
       const sep = prefix.endsWith("#") || /[\u4e00-\u9fa5]$/.test(prefix) ? "" : " ";
       const label = prefix ? `${prefix}${sep}${counter}` : counter;
@@ -285,8 +287,9 @@ function splitHeadlineSub(text) {
 }
 
 function drawStyledLabel(ctx, cw, ch, text, settings, item) {
-  if (!text) return;
   const theme = settings.labelTheme || "pill";
+  const hasText = !!(text && text.trim());
+  if (!hasText && theme !== "magazine") return;
   const preset = LABEL_THEME_PRESETS[theme] || LABEL_THEME_PRESETS.pill;
   const position = settings.watermarkPosition || "bottom_left";
   const shortSide = Math.min(cw, ch);
@@ -312,63 +315,76 @@ function drawStyledLabel(ctx, cw, ch, text, settings, item) {
   };
 
   if (theme === "magazine") {
-    // Editorial Magazine Cover Layout (fully editable font, colors, masthead, frame & opacity!)
-    const [head, sub] = splitHeadlineSub(text);
-    const rawMasthead = (settings.magazineTitle || "EACHDAY").trim() || "EACHDAY";
-    const masthead = formatStr(rawMasthead, Math.max(1, tracking));
+    // Editorial Magazine Cover Layout — both masthead and bottom label text may be left blank independently!
+    const rawMasthead = (settings.magazineTitle ?? "EACHDAY").trim();
+    const hasMasthead = rawMasthead.length > 0;
+    const hasFrame = bgStyle !== "none";
+    if (!hasMasthead && !hasText && !hasFrame) return;
+
+    const [head, sub] = hasText ? splitHeadlineSub(text) : ["", ""];
     ctx.save();
 
-    // Optional editorial dark gradient vignette controlled by bgOpacity
+    // Optional editorial dark gradient vignette controlled by bgOpacity (only where text exists)
     if (bgOpacity > 0.02) {
-      const topGrad = ctx.createLinearGradient(0, 0, 0, ch * 0.24);
-      topGrad.addColorStop(0, `rgba(0, 0, 0, ${(bgOpacity * 0.95).toFixed(2)})`);
-      topGrad.addColorStop(1, "rgba(0, 0, 0, 0)");
-      ctx.fillStyle = topGrad;
-      ctx.fillRect(0, 0, cw, ch * 0.24);
-
-      const botGrad = ctx.createLinearGradient(0, ch * 0.78, 0, ch);
-      botGrad.addColorStop(0, "rgba(0, 0, 0, 0)");
-      botGrad.addColorStop(1, `rgba(0, 0, 0, ${Math.min(0.88, bgOpacity * 1.05).toFixed(2)})`);
-      ctx.fillStyle = botGrad;
-      ctx.fillRect(0, ch * 0.78, cw, ch * 0.22);
+      if (hasMasthead) {
+        const topGrad = ctx.createLinearGradient(0, 0, 0, ch * 0.24);
+        topGrad.addColorStop(0, `rgba(0, 0, 0, ${(bgOpacity * 0.95).toFixed(2)})`);
+        topGrad.addColorStop(1, "rgba(0, 0, 0, 0)");
+        ctx.fillStyle = topGrad;
+        ctx.fillRect(0, 0, cw, ch * 0.24);
+      }
+      if (hasText) {
+        const botGrad = ctx.createLinearGradient(0, ch * 0.78, 0, ch);
+        botGrad.addColorStop(0, "rgba(0, 0, 0, 0)");
+        botGrad.addColorStop(1, `rgba(0, 0, 0, ${Math.min(0.88, bgOpacity * 1.05).toFixed(2)})`);
+        ctx.fillStyle = botGrad;
+        ctx.fillRect(0, ch * 0.78, cw, ch * 0.22);
+      }
     }
 
     const inset = Math.round(shortSide * 0.028);
-    if (bgStyle !== "none") {
+    if (hasFrame) {
       ctx.strokeStyle = hexToRgba(accentColor, bgStyle === "solid" ? 0.8 : 0.36);
       ctx.lineWidth = Math.max(1, Math.round(shortSide * (bgStyle === "solid" ? 0.004 : 0.0022)));
       ctx.strokeRect(inset, inset, cw - inset * 2, ch - inset * 2);
     }
 
-    // Masthead headline at top center
-    const titleSize = Math.max(20, Math.round(shortSide * 0.102 * sizeMul));
-    ctx.font = `800 ${titleSize}px ${fontFamily}`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "top";
-    ctx.shadowColor = "rgba(0,0,0,0.48)";
-    ctx.shadowBlur = 12;
-    ctx.fillStyle = hexToRgba(textColor, 0.96);
-    ctx.fillText(masthead, cw * 0.5, inset + Math.round(shortSide * 0.028), cw - inset * 4);
+    // Masthead headline at top center (only when non-blank)
+    if (hasMasthead) {
+      const masthead = formatStr(rawMasthead, Math.max(1, tracking));
+      const titleSize = Math.max(20, Math.round(shortSide * 0.102 * sizeMul));
+      ctx.font = `800 ${titleSize}px ${fontFamily}`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.shadowColor = "rgba(0,0,0,0.48)";
+      ctx.shadowBlur = 12;
+      ctx.fillStyle = hexToRgba(textColor, 0.96);
+      ctx.fillText(masthead, cw * 0.5, inset + Math.round(shortSide * 0.028), cw - inset * 4);
+    }
 
-    // Issue headline + date at bottom
-    const mainSize = Math.max(15, Math.round(shortSide * 0.054 * sizeMul));
-    const subSize = Math.max(11, Math.round(shortSide * 0.027 * sizeMul));
-    const bottomY = ch - inset - Math.round(shortSide * 0.044);
+    // Issue headline + date at bottom (only when non-blank)
+    if (hasText) {
+      const mainSize = Math.max(15, Math.round(shortSide * 0.054 * sizeMul));
+      const subSize = Math.max(11, Math.round(shortSide * 0.027 * sizeMul));
+      const bottomY = ch - inset - Math.round(shortSide * 0.044);
 
-    ctx.shadowBlur = 8;
-    ctx.textBaseline = "bottom";
-    if (sub) {
-      ctx.font = `600 ${subSize}px ${getFontFamily("sans")}`;
-      ctx.fillStyle = hexToRgba(textColor, 0.8);
-      ctx.fillText(formatStr(sub, Math.min(2, tracking)), cw * 0.5, bottomY, cw - inset * 4);
+      ctx.textAlign = "center";
+      ctx.shadowColor = "rgba(0,0,0,0.48)";
+      ctx.shadowBlur = 8;
+      ctx.textBaseline = "bottom";
+      if (sub) {
+        ctx.font = `600 ${subSize}px ${getFontFamily("sans")}`;
+        ctx.fillStyle = hexToRgba(textColor, 0.8);
+        ctx.fillText(formatStr(sub, Math.min(2, tracking)), cw * 0.5, bottomY, cw - inset * 4);
 
-      ctx.font = `700 ${mainSize}px ${fontFamily}`;
-      ctx.fillStyle = textColor;
-      ctx.fillText(formatStr(head, Math.min(2, tracking)), cw * 0.5, bottomY - subSize - Math.round(shortSide * 0.014), cw - inset * 4);
-    } else {
-      ctx.font = `700 ${mainSize}px ${fontFamily}`;
-      ctx.fillStyle = textColor;
-      ctx.fillText(formatStr(head, Math.min(2, tracking)), cw * 0.5, bottomY, cw - inset * 4);
+        ctx.font = `700 ${mainSize}px ${fontFamily}`;
+        ctx.fillStyle = textColor;
+        ctx.fillText(formatStr(head, Math.min(2, tracking)), cw * 0.5, bottomY - subSize - Math.round(shortSide * 0.014), cw - inset * 4);
+      } else {
+        ctx.font = `700 ${mainSize}px ${fontFamily}`;
+        ctx.fillStyle = textColor;
+        ctx.fillText(formatStr(head, Math.min(2, tracking)), cw * 0.5, bottomY, cw - inset * 4);
+      }
     }
     ctx.restore();
     return;
@@ -942,7 +958,8 @@ function drawStickerAt(ctx, pos, dw, dh, stickerText, customImg) {
     return;
   }
 
-  const txt = (stickerText || "😎").trim() || "😎";
+  const txt = (stickerText ?? "").trim();
+  if (!txt) return;
   ctx.save();
   ctx.translate(pos.x, pos.y);
   if (isLikelyTextBadge(txt)) {
@@ -998,9 +1015,9 @@ function applyPrivacyMasks(targetCanvas, item, settings, dstCx, dstCy, totalScal
 
     if (mode === "emoji") {
       if (isSelf) {
-        drawStickerAt(ctx, pos, dw, dh, settings.selfEmoji || "😎", customStickerImg);
+        drawStickerAt(ctx, pos, dw, dh, settings.selfEmoji ?? "😎", customStickerImg);
       } else {
-        drawStickerAt(ctx, pos, dw, dh, settings.bgEmoji || "😶", null);
+        drawStickerAt(ctx, pos, dw, dh, settings.bgEmoji ?? "😶", null);
       }
     } else if (mode === "blur" || mode === "mosaic") {
       applyOvalBlurOrMosaic(targetCanvas, pos.x, pos.y, dw * 0.56, dh * 0.62, mode);
@@ -1332,15 +1349,18 @@ export function renderGridPosterCanvas(
       : `${first.dateStr}  →  ${last.dateStr}  ·  共 ${total} 次记录（跨度 ${spanDays} 天）`;
 
   ctx.save();
-  ctx.fillStyle = "#f8fafc";
-  ctx.font = `800 36px -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif`;
+  const cleanTitle = (title ?? "").trim();
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText((title || "EachDay").trim(), out.width * 0.5, 44);
+  if (cleanTitle) {
+    ctx.fillStyle = "#f8fafc";
+    ctx.font = `800 36px -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif`;
+    ctx.fillText(cleanTitle, out.width * 0.5, 44);
+  }
 
   ctx.fillStyle = "#94a3b8";
   ctx.font = `500 18px -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif`;
-  ctx.fillText(subtitle, out.width * 0.5, 84);
+  ctx.fillText(subtitle, out.width * 0.5, cleanTitle ? 84 : 60);
   ctx.restore();
 
   const cellCanvas = document.createElement("canvas");

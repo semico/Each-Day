@@ -305,10 +305,10 @@ function syncSettingsUI() {
     btn.classList.toggle("active", btn.dataset.bgEmoji === (s.bgEmoji || "😶"));
   });
   if ($("txtCustomSticker") && document.activeElement !== $("txtCustomSticker")) {
-    $("txtCustomSticker").value = state.customStickerImg ? "" : (s.selfEmoji || "");
+    $("txtCustomSticker").value = state.customStickerImg ? "" : (s.selfEmoji ?? "");
   }
   if ($("txtBgEmoji") && document.activeElement !== $("txtBgEmoji")) {
-    $("txtBgEmoji").value = s.bgEmoji || "😶";
+    $("txtBgEmoji").value = s.bgEmoji ?? "😶";
   }
   $("customStickerPreview").classList.toggle("hidden", !state.customStickerImg);
   if (state.customStickerUrl) $("customStickerThumb").src = state.customStickerUrl;
@@ -326,7 +326,7 @@ function syncSettingsUI() {
   const curTheme = s.labelTheme || "pill";
   $("magazineTitleRow").classList.toggle("hidden", curTheme !== "magazine");
   if ($("txtMagazineTitle") && document.activeElement !== $("txtMagazineTitle")) {
-    $("txtMagazineTitle").value = s.magazineTitle || "EACHDAY";
+    $("txtMagazineTitle").value = s.magazineTitle ?? "EACHDAY";
   }
   $("styleEditorBox").classList.toggle("hidden", !state.styleEditorOpen);
   $("selLabelFont").value = s.labelFont || "sans";
@@ -345,9 +345,11 @@ function syncSettingsUI() {
   $("customLabelBox").classList.toggle("hidden", s.watermarkStyle !== "custom");
   $("templateBox").classList.toggle("hidden", s.watermarkStyle !== "template");
   if ($("txtLabelTemplate") && document.activeElement !== $("txtLabelTemplate")) {
-    $("txtLabelTemplate").value = s.labelTemplate || "Day {n2} · {date}";
+    $("txtLabelTemplate").value = s.labelTemplate ?? "Day {n2} · {date}";
   }
-  $("txtCustomPrefix").value = s.customPrefix;
+  if ($("txtCustomPrefix") && document.activeElement !== $("txtCustomPrefix")) {
+    $("txtCustomPrefix").value = s.customPrefix ?? "";
+  }
   $("chkCustomElapsed").checked = !!s.customUseElapsed;
   $("chkCustomDate").checked = !!s.customShowDate;
   $("selWmPos").value = s.watermarkPosition;
@@ -1579,7 +1581,7 @@ function switchCompareTab(tab) {
 function updatePosterPreview() {
   const enabled = state.items.filter((it) => it.enabled);
   if (enabled.length < 2) return;
-  const title = $("txtPosterTitle").value || t("posterDefaultTitle");
+  const title = $("txtPosterTitle").value.trim();
   const posterCanvas = renderGridPosterCanvas(enabled, state.settings, {
     gridCount: state.posterGridCount,
     title,
@@ -2367,7 +2369,6 @@ function bindEvents() {
   );
   $("txtBgEmoji").addEventListener("input", (e) => {
     const val = e.target.value.trim();
-    if (!val) return;
     updateGlobalSetting({ bgMask: "emoji", bgEmoji: val }, false);
   });
   $("txtBgEmoji").addEventListener("change", () => state.items.length && renderFilmstrip());
@@ -2383,7 +2384,6 @@ function bindEvents() {
   );
   $("txtCustomSticker").addEventListener("input", (e) => {
     const val = e.target.value.trim();
-    if (!val) return;
     state.customStickerImg = null;
     if (state.customStickerUrl) {
       URL.revokeObjectURL(state.customStickerUrl);
