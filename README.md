@@ -1,50 +1,128 @@
-# EachDay · 健身打卡主体对齐视频工具
+<div align="center">
 
-自动识别并对齐每次健身打卡照片中的你（智能过滤健身房背景路人），按拍摄日期排序并生成流畅的高清成长延时视频（MP4）。
+# EachDay (Match-Still)
 
-## 核心特性
+**Automatically align yourself across daily gym progress photos and turn them into smooth timelapse videos.**
 
-- **多人体姿态识别 + 主体锁定（YOLO11-Pose）**：即使健身房背景里有其他人在走动、弯腰或路过，也能综合前景大小、居中度、直立姿态和头部外观特征自动锁定「你」作为对齐主体；如有特殊情况，在界面中点击原图里的方框即可 1 秒切换人物。
-- **自适应身体比例对齐**：以肩部、颈部、头部与髋部构成的躯干几何为基准，自动计算缩放比例、位置和轻微倾斜扶正，让无论站远站近的照片在视频中人物位置始终稳如泰山。
-- **自然高斯模糊补边**：边缘超出原图范围时，自动用柔和的高斯模糊背景自然过渡，告别突兀黑边（也支持切换纯黑或边缘拉伸）。
-- **自动按日期排序 + 水印叠加**：优先读取照片 EXIF 拍摄时间（支持 iPhone HEIC / JPG / PNG / WEBP），自动叠加如 `Day 01 · 2026.05.12` 的打卡天数与日期水印。
-- **本地交互式预览与微调**：支持 **本地文件夹**、**macOS「照片」App 相簿** 和 **网页拖拽上传** 三种导入方式；支持 **叠影对照（Onion-Skin）**、**对齐辅助线**、**实时视频预览播放**、**拖拽/滚轮逐帧微调** 以及一键跳过异常帧。
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.10–3.12](https://img.shields.io/badge/Python-3.10%E2%80%933.12-3776AB.svg)](https://www.python.org/)
+[![Platform: macOS / Cross-platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#installation)
 
-## 快速开始
+English | [简体中文](README.zh-CN.md)
 
-在项目根目录运行：
+</div>
+
+---
+
+Take a mirror selfie after every workout? **EachDay** detects your body pose across all your photos, filters out random gym-goers in the background, aligns your head, shoulders, and torso to the exact same scale and position, and exports a crisp H.264 MP4 timelapse—all running **100% locally** on your machine.
+
+<!-- Tip: Drop a demo GIF or video here once you export one!
+<p align="center">
+  <img src="docs/demo.gif" alt="EachDay aligned timelapse demo" width="320" />
+</p>
+-->
+
+## Features
+
+- **Multi-Person Pose Detection + Subject Locking (`YOLO11-Pose`)**  
+  Detects every person in the frame and automatically locks onto *you* using foreground prominence, upright posture cues, and cross-photo head appearance matching—even when people walk or bend over right behind you in the gym.
+- **Self-Calibrating Body Alignment**  
+  Learns your natural shoulder-to-torso and head-to-torso proportions across the entire batch, aligns every frame smoothly regardless of distance to the mirror, and levels tilt relative to your natural standing posture so gym walls stay straight.
+- **Natural Gaussian Blur Edge Fill**  
+  When zooming or shifting exposes areas outside the original photo, EachDay blends a softly feathered Gaussian-blurred background instead of harsh black bars (with optional `black` or `edge` modes).
+- **EXIF Chronological Sorting & Watermarks**  
+  Supports `JPG`, `PNG`, `WEBP`, and iPhone `HEIC/HEIF`. Automatically sorts by EXIF capture date and renders optional frosted pill watermarks like `Day 01 · 2026.05.12`.
+- **Interactive Local Web Studio**  
+  - Import from a **local folder**, **drag-and-drop upload**, or directly from a **macOS Photos album**
+  - **Onion-skin overlay** (`O`) & **alignment guides** (`G`) to inspect frame-to-frame precision
+  - **Live playback preview** (`Space`) before exporting
+  - **One-click subject switching** on the original photo if a crowded shot ever picks someone else
+  - **Drag / scroll fine-tuning** and instant frame skip (`X`)
+- **Zero-Setup H.264 MP4 Export**  
+  Uses bundled `imageio-ffmpeg` (no separate FFmpeg install needed) with `9:16`, `3:4`, `4:5`, and `1:1` aspect ratios, `1080p` / `720p`, configurable FPS, final-frame hold, and optional crossfade transitions.
+
+## Installation
+
+Requires **Python 3.10–3.12** and [`uv`](https://docs.astral.sh/uv/).
+
+```bash
+git clone https://github.com/semico/Match-Still.git
+cd Match-Still
+uv sync --python 3.10
+```
+
+> On first run, the lightweight `yolo11n-pose.pt` (~6 MB) pose model is automatically downloaded into `models/` and cached for offline use.
+
+## Quick Start
+
+### 1. Launch the Local Web Studio (Recommended)
 
 ```bash
 uv run eachday
 ```
 
-程序会自动启动本地工作台并在浏览器打开（默认 `http://127.0.0.1:8765`）。
+This starts the local studio at `http://127.0.0.1:8765` and opens it in your browser automatically.
 
-### 启动时直接加载本地文件夹
+You can also pre-load a folder on startup:
 
 ```bash
 uv run eachday --folder ~/Pictures/Gym
 ```
 
-### 纯命令行模式（可选）
+### 2. Headless CLI Mode (Optional)
 
-如果不想打开网页，可以直接一条命令自动对齐并生成视频：
+Run full auto-alignment and video export directly from the terminal without opening the browser:
 
 ```bash
-uv run eachday --headless --folder ~/Pictures/Gym --output gym_progress.mp4 --aspect 9:16 --fps 6
+uv run eachday --headless \
+  --folder ~/Pictures/Gym \
+  --output gym_progress.mp4 \
+  --aspect 9:16 \
+  --resolution 1080p \
+  --fps 6
 ```
 
-## 网页工作台快捷键
+<details>
+<summary>All CLI options</summary>
 
-| 快捷键 | 功能 |
+| Flag | Default | Description |
+| --- | --- | --- |
+| `-f, --folder` | — | Path to a local photo folder to load |
+| `-r, --recursive` | `false` | Recursively scan subfolders |
+| `-p, --port` | `8765` | Local web server port |
+| `--no-browser` | `false` | Start the web server without auto-opening the browser |
+| `--headless` | `false` | Skip web UI and export video directly |
+| `-o, --output` | auto | Output `.mp4` path (headless mode) |
+| `--aspect` | `9:16` | Aspect ratio: `9:16`, `3:4`, `4:5`, `1:1` |
+| `--resolution` | `1080p` | Output resolution: `1080p`, `720p` |
+| `--fps` | `6.0` | Photos per second |
+| `--fill` | `blur` | Edge fill mode: `blur`, `black`, `edge` |
+| `--no-watermark` | `false` | Disable date/day watermark overlay |
+| `--crossfade` | `false` | Enable smooth crossfade between consecutive photos |
+
+</details>
+
+## Studio Keyboard Shortcuts
+
+| Shortcut | Action |
 | --- | --- |
-| `←` / `→` | 切换上一张 / 下一张照片 |
-| `Space` | 播放 / 暂停实时对齐预览 |
-| `G` | 开关对齐辅助线 |
-| `O` | 开关叠影对照（叠加前一张对齐结果对比） |
-| `X` | 保留 / 跳过当前照片 |
-| 预览图上拖拽 / 滚轮 | 手动微调当前照片的位置和缩放 |
+| `←` / `→` | Previous / Next photo |
+| `Space` | Play / Pause live timelapse preview |
+| `G` | Toggle alignment guide lines |
+| `O` | Toggle onion-skin overlay (compare with previous frame) |
+| `X` | Include / Skip current frame |
+| Drag / Scroll on preview | Fine-tune current frame position & zoom |
 
-## macOS「照片」App 相簿导入提示
+## macOS Photos App Import
 
-首次点击「照片 App 相簿」时，macOS 会弹出权限确认窗口，允许终端/Python 控制「照片」即可自动列出你的自定义相簿并导出原图。建议先在「照片」App 里建一个专门的「健身打卡」相簿，之后每次打开一键导入即可。
+Click **照片 App 相簿 (Photos Albums)** in the studio header to browse albums directly from the macOS Photos app and export originals with EXIF dates intact. On first use, macOS will ask for Automation permission to access Photos.
+
+> Tip: Create a dedicated album (e.g., `Gym`) in macOS Photos and drop your post-workout photos into it for one-click imports.
+
+## Privacy
+
+All pose detection, image processing, and video encoding run **100% locally** on your computer. Your photos are never uploaded to any external server.
+
+## License
+
+Released under the [MIT License](LICENSE). Copyright © 2026 Yubo.

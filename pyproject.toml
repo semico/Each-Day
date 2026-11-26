@@ -3,6 +3,8 @@ name = "eachday"
 version = "0.1.0"
 description = "Automatically align your gym progress photos and generate smooth timelapse videos."
 readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Yubo" }]
 requires-python = ">=3.10,<3.13"
 dependencies = [
     "fastapi>=0.115.0",
@@ -15,6 +17,10 @@ dependencies = [
     "imageio-ffmpeg>=0.5.1",
     "ultralytics>=8.3.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/semico/Match-Still"
+Repository = "https://github.com/semico/Match-Still"
 
 [project.scripts]
 eachday = "eachday.cli:main"
