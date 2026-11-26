@@ -33,19 +33,23 @@ Documenting **gym progress, daily selfies ("Photo a Day"), baby growth, OOTD out
   - **🐾 Pets / Plants / 80+ Objects Mode (`YOLO11n`)** — Automatically detects 80 everyday subject categories (dogs, cats, birds, potted plants, cups, cars, laptops, furniture, etc.) **or draw a custom box around ANY subject** (LEGO, painting, sourdough jar, watch) in one photo and click **🎯 Auto-Track Across All Photos** to track and align it across every frame automatically!
   - **🎯 2-Point Precision Mode** — Click any two reference points (`A → B`) for exact geometric alignment of rooms, renovations, or art.
   - **Cross-Photo Subject Lock**: In Body, Face, or Object mode, click any subject in one photo and hit **Auto-Track Across All Photos** to lock onto that exact person/pet/object across the entire sequence.
-- **One-Click Automatic Face Privacy Mask & Stickers**  
-  Auto-tracks faces across every frame to apply 14 built-in emoji stickers, **any custom typed emoji/text badge**, **any uploaded image/PNG sticker**, smooth blur, or pixelation to **your own face** and/or **background bystanders**—ready to share safely on social media.
+- **One-Click Automatic Face Privacy Mask & Stickers (Self + Bystanders)**  
+  Auto-tracks faces across every frame to apply 14 built-in emoji stickers, **any custom typed emoji/text badge**, **any uploaded image/PNG sticker**, smooth blur, or pixelation to **your own face** — and mask **background bystanders** with blur, pixelation, or stickers too.
+- **Subject-Protected Depth-of-Field Background Bokeh**  
+  Softly blurs distracting backgrounds while keeping the locked subject (full silhouette + limbs) razor-sharp, with adjustable blur strength and sharp subject protection zone.
 - **One-Click Auto Exposure & Color Consistency Match**  
   Normalizes brightness and white balance across photos taken under different lighting conditions—matching either the **Batch Median** or **any chosen Reference Photo**—with soft highlight roll-off and adjustable strength.
-- **Rich Local Export Formats (MP4 + GIF + Wipe Video + Grid Poster)**  
-  - **H.264 MP4 Timelapse** (`9:16`, `3:4`, `4:5`, `1:1`, **`4:3`**, **`16:9`**; `1080p`/`720p`) with optional **Local BGM Audio (`MP3/M4A/WAV`) & BPM Beat-Sync** muxed straight into the MP4
+- **5 Editable Visual Label Themes & Custom Label Templates**  
+  Choose from **Frosted Pill**, **Magazine Cover** (with customizable masthead & border), **Minimal**, **35mm Film** date stamp, or **Sports** tag — then live-edit font, size, text color, accent/border color, backdrop style & opacity, letter spacing, and uppercase. Build dynamic overlays using **Custom Templates** (`{n}`, `{n2}`, `{day}`, `{date}`, `{mm}.{dd}`, `{total}`, `{pct}`, `{name}`), or leave text blank / set format to **None**.
+- **Real Musical Beat-Cut ("Onset Sync") & Rich Local Exports (MP4 + GIF + Wipe Video + Grid Poster)**  
+  - **H.264 MP4 Timelapse** (`9:16`, `3:4`, `4:5`, `1:1`, `4:3`, `16:9`; `1080p`/`720p`) with optional **Local BGM Audio (`MP3/M4A/WAV`)**, **automatic drum/beat onset detection** (interactive waveform with beat markers, click-to-set start point, live audition, and beat sensitivity), and cross-browser AAC audio muxing (works in **both Chrome and Safari** via offline WASM AAC-LC fallback)
   - **Animated GIF Export** (pure in-browser quantized GIF, ready for GitHub, WeChat, Discord & Notion)
   - **Before / After Side-by-Side PNG & Animated Curtain Wipe MP4**
   - **Progress Grid Collage Poster PNG** (`2×2`, `3×2`, `3×3`, `4×3` gallery layout with custom title & date span)
-- **Built for Everyday Polish & Offline Use (PWA)**  
-  - Offline-first **EXIF capture date reader** (JPEG / iPhone HEIC / PNG / WebP) + **manual date editor**, **Undo/Redo** (`Cmd/Ctrl+Z`), drag-to-reorder filmstrip, starred milestone frames (`M`), and **`.eachday.json`** project save/resume
+- **Built for Everyday Polish & Offline Use (PWA + Synced Local Desktop)**  
+  - Offline-first **EXIF capture date reader** (JPEG / iPhone HEIC / PNG / WebP) + **manual date editor**, **Undo/Redo** (`Cmd/Ctrl+Z`), drag-to-reorder filmstrip, starred milestone frames (`M`), topbar **New Project** confirmation guard, and **`.eachday.json`** project save/resume
   - **1-Click Sample Demo** for instant zero-setup tryout + **Installable Offline PWA** (add to desktop/home screen and run completely offline)
-  - Optional local Python desktop version also supports direct **macOS Photos app album** import and headless CLI batch export.
+  - Local Python desktop version (`uv run eachday`) now serves the **exact same full Pro Studio** plus direct **macOS Photos app album** import and headless CLI batch export (`9:16`–`16:9`).
 
 ## Installation
 
@@ -99,7 +103,7 @@ uv run eachday --headless \
 | `--no-browser` | `false` | Start the web server without auto-opening the browser |
 | `--headless` | `false` | Skip web UI and export video directly |
 | `-o, --output` | auto | Output `.mp4` path (headless mode) |
-| `--aspect` | `9:16` | Aspect ratio: `9:16`, `3:4`, `4:5`, `1:1` |
+| `--aspect` | `9:16` | Aspect ratio: `9:16`, `3:4`, `4:5`, `1:1`, `4:3`, `16:9` |
 | `--resolution` | `1080p` | Output resolution: `1080p`, `720p` |
 | `--fps` | `6.0` | Photos per second |
 | `--fill` | `blur` | Edge fill mode: `blur`, `black`, `edge` |
