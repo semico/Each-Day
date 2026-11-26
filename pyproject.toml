@@ -19,8 +19,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/semico/Match-Still"
-Repository = "https://github.com/semico/Match-Still"
+Homepage = "https://github.com/semico/Each-Day"
+Repository = "https://github.com/semico/Each-Day"
 
 [project.scripts]
 eachday = "eachday.cli:main"

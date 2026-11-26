@@ -1,11 +1,11 @@
 <div align="center">
 
-# EachDay (Match-Still)
+# EachDay
 
 **自动对齐每次健身打卡照片中的人物主体，一键生成流畅的高清成长延时视频。**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![在线直接使用：100% 本地零上传](https://img.shields.io/badge/%E5%9C%A8%E7%BA%BF%E7%BD%91%E9%A1%B5%E7%89%88-100%25%20%E6%9C%AC%E5%9C%B0%E8%BF%90%E8%A1%8C%20%C2%B7%20%E7%85%A7%E7%89%87%E4%B8%8D%E4%B8%8A%E4%BC%A0-10b981.svg)](https://semico.github.io/Match-Still/)
+[![在线直接使用：100% 本地零上传](https://img.shields.io/badge/%E5%9C%A8%E7%BA%BF%E7%BD%91%E9%A1%B5%E7%89%88-100%25%20%E6%9C%AC%E5%9C%B0%E8%BF%90%E8%A1%8C%20%C2%B7%20%E7%85%A7%E7%89%87%E4%B8%8D%E4%B8%8A%E4%BC%A0-10b981.svg)](https://semico.github.io/Each-Day/)
 [![Python 3.10–3.12](https://img.shields.io/badge/Python-3.10%E2%80%933.12-3776AB.svg)](https://www.python.org/)
 
 [English](README.md) | 简体中文
@@ -15,7 +15,7 @@
 ---
 
 > ### 🌐 打开网页直接用 — 100% 本地运行 · 照片绝不上传
-> **[立即打开 Match-Still 网页工作台 →](https://semico.github.io/Match-Still/)**
+> **[立即打开 EachDay 网页工作台 →](https://semico.github.io/Each-Day/)**
 >
 > **零上传 · 无后端服务器。** AI 姿态识别（浏览器本地运行 `YOLO11-Pose ONNX`）、人物锁定、图像对齐与 MP4 视频编码全部在你的本机浏览器内完成，照片永远不会离开你的设备（加载完页面后甚至可以断网使用）。
 
@@ -49,8 +49,8 @@
 需要 **Python 3.10–3.12** 和 [`uv`](https://docs.astral.sh/uv/)：
 
 ```bash
-git clone https://github.com/semico/Match-Still.git
-cd Match-Still
+git clone https://github.com/semico/Each-Day.git
+cd Each-Day
 uv sync --python 3.10
 ```
 

@@ -98,7 +98,7 @@ export const TRANSLATIONS = {
     errNeed2: "至少需要 2 张启用的照片才能播放预览",
     // Privacy modal
     privModalTitle: "🔒 隐私保护与纯本地运行说明",
-    privModalLead: "Match-Still (EachDay) 网页版是一个纯静态前端应用，没有任何后端服务器接收你的照片。",
+    privModalLead: "EachDay 网页版是一个纯静态前端应用，没有任何后端服务器接收你的照片。",
     privPoints: [
       ["零图片上传", "你选择的每一张健身照都仅读取到浏览器本地内存中，绝不会发送到任何远程服务器或云端 API。"],
       ["本机 AI 推理", "人体 17 关键点姿态模型（YOLO11-Pose ONNX）直接下载到你的浏览器本地运行，计算完全消耗你自己的设备算力。"],
@@ -210,7 +210,7 @@ export const TRANSLATIONS = {
     errNeed2: "At least 2 included photos are required to play preview",
     // Privacy modal
     privModalTitle: "🔒 Privacy-First & 100% Local Processing",
-    privModalLead: "Match-Still (EachDay) runs entirely as a static client-side web app with zero backend servers.",
+    privModalLead: "EachDay runs entirely as a static client-side web app with zero backend servers.",
     privPoints: [
       ["Zero Photo Uploads", "Every gym photo stays inside your browser's local memory and is never transmitted over the network."],
       ["On-Device AI Pose Detection", "The lightweight YOLO11-Pose ONNX model runs directly inside your browser via WebAssembly using your own CPU."],
