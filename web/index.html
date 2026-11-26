@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>EachDay · 100% 本地健身打卡主体对齐工具（照片不上传）</title>
-  <meta name="description" content="100% in-browser local gym progress photo alignment and timelapse MP4 generator. Your photos never leave your device." />
+  <title>EachDay · 100% 本地每日变化对齐工作室（照片绝不上传）</title>
+  <meta name="description" content="100% in-browser local photo alignment and timelapse studio for gym progress, daily selfies, baby growth, OOTD, pets & plants. Zero uploads." />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
@@ -21,7 +21,7 @@
               <span data-i18n="privacyPill">100% 本地运行 · 照片绝不上传</span>
             </button>
           </div>
-          <div class="brand-sub" data-i18n="brandSub">100% 浏览器本地运行 · 健身打卡主体自动对齐</div>
+          <div class="brand-sub" data-i18n="brandSub">100% 浏览器本地运行 · 每日变化自动对齐与延时视频</div>
         </div>
       </div>
 
@@ -30,10 +30,13 @@
           <span>📂</span> <span data-i18n="btnSelectFolder">选择文件夹</span>
         </label>
         <label class="btn btn-secondary" for="fileInput">
-          <span>🖼️</span> <span data-i18n="btnSelectPhotos">选择多张照片</span>
+          <span>🖼️</span> <span data-i18n="btnSelectPhotos">选择照片</span>
         </label>
+        <button class="btn btn-secondary" id="btnCompare" disabled>
+          <span>🪞</span> <span data-i18n="btnCompare">首尾对比图</span>
+        </button>
         <button class="btn btn-primary" id="btnExport" disabled>
-          <span>🎬</span> <span data-i18n="btnExport">导出 MP4 视频</span>
+          <span>🎬</span> <span data-i18n="btnExport">导出 MP4</span>
         </button>
         <button class="btn btn-ghost lang-btn" id="btnLang" title="Switch Language">EN</button>
         <a class="btn btn-ghost github-btn" href="https://github.com/semico/Each-Day" target="_blank" rel="noopener" title="GitHub">
@@ -42,9 +45,10 @@
       </div>
     </header>
 
-    <!-- Hidden File Inputs (multi-file & whole-folder) -->
+    <!-- Hidden File Inputs -->
     <input type="file" id="fileInput" multiple accept="image/*,.heic,.heif" hidden />
     <input type="file" id="folderInput" webkitdirectory directory multiple hidden />
+    <input type="file" id="projectInput" accept=".json,application/json" hidden />
 
     <!-- Progress Banner -->
     <div class="status-bar hidden" id="statusBar">
@@ -62,6 +66,15 @@
       <!-- Left Panel: Global Settings -->
       <aside class="panel panel-left">
         <div class="panel-scroll">
+          <section class="card">
+            <h3 class="card-title" data-i18n="secAlignMode">对齐模式</h3>
+            <div class="seg-group" id="alignModeGroup">
+              <button class="seg-btn active" data-val="body" data-i18n="segBody">全身/身材</button>
+              <button class="seg-btn" data-val="face" data-i18n="segFace">人脸/双眼</button>
+              <button class="seg-btn" data-val="points" data-i18n="segPoints">两点对齐</button>
+            </div>
+          </section>
+
           <section class="card">
             <h3 class="card-title" data-i18n="secAspect">画幅与清晰度</h3>
             <div class="seg-group" id="aspectGroup">
@@ -83,19 +96,79 @@
                 <label data-i18n="lblZoom">主体缩放</label>
                 <span class="val" id="valZoom">1.00×</span>
               </div>
-              <input type="range" id="rngZoom" min="0.65" max="1.50" step="0.02" value="1.00" />
+              <input type="range" id="rngZoom" min="0.55" max="1.60" step="0.02" value="1.00" />
             </div>
             <div class="control-row">
               <div class="control-head">
                 <label data-i18n="lblVShift">主体上下位置</label>
                 <span class="val" id="valVShift">0%</span>
               </div>
-              <input type="range" id="rngVShift" min="-0.15" max="0.15" step="0.01" value="0.00" />
+              <input type="range" id="rngVShift" min="-0.18" max="0.18" step="0.01" value="0.00" />
             </div>
             <label class="switch-row">
-              <span data-i18n="lblAutoLevel">自动扶正身体倾斜</span>
+              <span data-i18n="lblAutoLevel">自动扶正倾斜</span>
               <input type="checkbox" id="chkAutoLevel" checked />
             </label>
+          </section>
+
+          <section class="card">
+            <h3 class="card-title" data-i18n="secColorMatch">光线与色调统一</h3>
+            <label class="switch-row">
+              <span data-i18n="lblColorMatch">自动统一亮度与白平衡</span>
+              <input type="checkbox" id="chkColorMatch" />
+            </label>
+            <div id="colorMatchOptions" class="mt-8 hidden">
+              <div class="control-row">
+                <label class="small-label" data-i18n="lblColorBase">色调参考基准</label>
+                <select id="selColorRef" class="select-input">
+                  <option value="" data-i18n="colorBaseMedian">全组中位数（自动均衡）</option>
+                </select>
+              </div>
+              <div class="control-row mt-8">
+                <div class="control-head">
+                  <label data-i18n="lblColorStrength">统一强度</label>
+                  <span class="val" id="valColorStrength">65%</span>
+                </div>
+                <input type="range" id="rngColorStrength" min="0.15" max="1.00" step="0.05" value="0.65" />
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <h3 class="card-title" data-i18n="secPrivacyMask">隐私遮脸与打码</h3>
+            <div class="control-row">
+              <label class="small-label" data-i18n="lblSelfMask">遮挡自己人脸</label>
+              <div class="seg-group" id="selfMaskGroup">
+                <button class="seg-btn active" data-val="none" data-i18n="maskNone">关闭</button>
+                <button class="seg-btn" data-val="emoji" data-i18n="maskEmoji">贴纸</button>
+                <button class="seg-btn" data-val="blur" data-i18n="maskBlur">模糊</button>
+                <button class="seg-btn" data-val="mosaic" data-i18n="maskMosaic">马赛克</button>
+              </div>
+            </div>
+            <div id="emojiPickerRow" class="emoji-row hidden">
+              <button class="emoji-btn active" data-emoji="😎" type="button">😎</button>
+              <button class="emoji-btn" data-emoji="🙂" type="button">🙂</button>
+              <button class="emoji-btn" data-emoji="🐱" type="button">🐱</button>
+              <button class="emoji-btn" data-emoji="🐻" type="button">🐻</button>
+              <button class="emoji-btn" data-emoji="🤖" type="button">🤖</button>
+              <button class="emoji-btn" data-emoji="✨" type="button">✨</button>
+              <button class="emoji-btn" data-emoji="🏋️" type="button">🏋️</button>
+            </div>
+            <div id="maskSizeRow" class="control-row mt-8 hidden">
+              <div class="control-head">
+                <label data-i18n="lblMaskSize">遮挡大小</label>
+                <span class="val" id="valMaskScale">1.15×</span>
+              </div>
+              <input type="range" id="rngMaskScale" min="0.80" max="1.75" step="0.05" value="1.15" />
+            </div>
+            <div class="control-row mt-8">
+              <label class="small-label" data-i18n="lblBgMask">背景路人打码</label>
+              <div class="seg-group" id="bgMaskGroup">
+                <button class="seg-btn active" data-val="none" data-i18n="bgMaskNone">关闭</button>
+                <button class="seg-btn" data-val="blur" data-i18n="bgMaskBlur">自动模糊</button>
+                <button class="seg-btn" data-val="mosaic" data-i18n="bgMaskMosaic">马赛克</button>
+              </div>
+            </div>
           </section>
 
           <section class="card">
@@ -108,9 +181,9 @@
           </section>
 
           <section class="card">
-            <h3 class="card-title" data-i18n="secWatermark">日期与打卡水印</h3>
+            <h3 class="card-title" data-i18n="secWatermark">标签与进度条</h3>
             <label class="switch-row">
-              <span data-i18n="lblShowWm">显示日期 / 打卡天数</span>
+              <span data-i18n="lblShowWm">显示日期 / 打卡标签</span>
               <input type="checkbox" id="chkWatermark" checked />
             </label>
             <div id="watermarkOptions" class="mt-8">
@@ -121,7 +194,26 @@
                   <option value="count_date" data-i18n="wmCountDate">第 1 次 · 2026.05.12</option>
                   <option value="date_only" data-i18n="wmDateOnly">仅日期 (2026.05.12)</option>
                   <option value="day_only" data-i18n="wmDayOnly">仅累计天数 (Day 01)</option>
+                  <option value="custom" data-i18n="wmCustom">自定义前缀标签</option>
                 </select>
+              </div>
+              <div id="customLabelBox" class="custom-label-box hidden">
+                <label class="small-label" data-i18n="lblCustomPrefix">标签前缀</label>
+                <input type="text" id="txtCustomPrefix" class="text-input mt-6" value="OOTD #" maxlength="24" />
+                <div class="preset-chips mt-6">
+                  <button class="preset-chip" type="button" data-prefix="OOTD #">OOTD #</button>
+                  <button class="preset-chip" type="button" data-prefix="宝宝第">宝宝第</button>
+                  <button class="preset-chip" type="button" data-prefix="孕周 #">孕周 #</button>
+                  <button class="preset-chip" type="button" data-prefix="Day ">Day</button>
+                </div>
+                <label class="switch-row mt-8">
+                  <span class="small-label" data-i18n="lblCustomElapsed">数字按经过天数</span>
+                  <input type="checkbox" id="chkCustomElapsed" />
+                </label>
+                <label class="switch-row mt-6">
+                  <span class="small-label" data-i18n="lblCustomDate">同时显示拍摄日期</span>
+                  <input type="checkbox" id="chkCustomDate" checked />
+                </label>
               </div>
               <div class="control-row mt-8">
                 <label class="small-label" data-i18n="lblWmPos">位置</label>
@@ -133,6 +225,15 @@
                 </select>
               </div>
             </div>
+            <div class="divider-line"></div>
+            <label class="switch-row">
+              <span data-i18n="lblShowProgress">显示顶部/底部进度条</span>
+              <input type="checkbox" id="chkProgressBar" />
+            </label>
+            <div id="progressPosRow" class="seg-group mt-8 hidden">
+              <button class="seg-btn active" data-val="top" data-i18n="posTop">顶部</button>
+              <button class="seg-btn" data-val="bottom" data-i18n="posBottom">底部</button>
+            </div>
           </section>
 
           <section class="card">
@@ -143,6 +244,13 @@
                 <span class="val" id="valFps">6 张/秒</span>
               </div>
               <input type="range" id="rngFps" min="2" max="15" step="0.5" value="6" />
+            </div>
+            <div class="control-row">
+              <div class="control-head">
+                <label data-i18n="lblMilestoneHold">里程碑帧多停留</label>
+                <span class="val" id="valMilestoneHold">0.8 秒</span>
+              </div>
+              <input type="range" id="rngMilestoneHold" min="0.2" max="2.0" step="0.1" value="0.8" />
             </div>
             <div class="control-row">
               <div class="control-head">
@@ -167,17 +275,39 @@
               <span>🛡️</span>
               <span data-i18n="heroBadge">100% 浏览器本地处理 · 零上传 · 隐私安全</span>
             </div>
-            <h1 data-i18n="heroTitle">把健身打卡照，自动对齐成流畅成长视频</h1>
+            <h1 data-i18n="heroTitle">把每一天的变化，自动对齐成丝滑视频</h1>
             <p class="hero-desc" data-i18n="heroDesc">
-              AI 姿态识别、人物锁定、图像对齐与 MP4 视频编码全部直接在你的浏览器本地完成，照片永远不会离开你的设备。
+              健身身材、每日自拍、宝宝成长、OOTD 穿搭、宠物植物或装修记录——AI 对齐、人脸隐私贴纸与 MP4 编码全在浏览器本地完成，照片永不离开设备。
             </p>
+
+            <!-- Scene / Mode Picker Cards -->
+            <div class="mode-cards" id="heroModeCards">
+              <button class="mode-card active" type="button" data-mode="body">
+                <span class="mode-emoji">🏋️</span>
+                <strong data-i18n="modeBody">全身 / 身材</strong>
+                <span class="mode-hint" data-i18n="modeBodyHint">健身 · OOTD · 孕期 · 身高</span>
+              </button>
+              <button class="mode-card" type="button" data-mode="face">
+                <span class="mode-emoji">🤳</span>
+                <strong data-i18n="modeFace">人脸 / 双眼</strong>
+                <span class="mode-hint" data-i18n="modeFaceHint">每日自拍 · 宝宝 · 护肤 · 发型</span>
+              </button>
+              <button class="mode-card" type="button" data-mode="points">
+                <span class="mode-emoji">🎯</span>
+                <strong data-i18n="modePoints">任意物体</strong>
+                <span class="mode-hint" data-i18n="modePointsHint">宠物 · 植物 · 装修 · 两点对齐</span>
+              </button>
+            </div>
 
             <div class="empty-actions">
               <label class="btn btn-primary btn-lg" for="fileInput">
-                <span>🖼️</span> <span data-i18n="btnHeroPhotos">选择健身照片</span>
+                <span>🖼️</span> <span data-i18n="btnHeroPhotos">选择多张照片</span>
               </label>
               <label class="btn btn-secondary btn-lg" for="folderInput">
                 <span>📂</span> <span data-i18n="btnHeroFolder">选择整个文件夹</span>
+              </label>
+              <label class="btn btn-ghost btn-lg" for="projectInput">
+                <span data-i18n="btnLoadProject">📥 导入配置</span>
               </label>
             </div>
 
@@ -188,14 +318,14 @@
                 <div class="trust-desc" data-i18n="trust1Desc">所有计算都在本机浏览器内存中完成，没有任何图片会经过云端或第三方接口。</div>
               </div>
               <div class="trust-card">
-                <div class="trust-icon">⚡</div>
-                <div class="trust-title" data-i18n="trust2Title">加载后断网也能用</div>
-                <div class="trust-desc" data-i18n="trust2Desc">首次打开自动缓存约 11MB 轻量姿态模型，随后即使关闭网络也可正常对齐和导出。</div>
+                <div class="trust-icon">😎</div>
+                <div class="trust-title" data-i18n="trust2Title">一键隐私遮脸打码</div>
+                <div class="trust-desc" data-i18n="trust2Desc">自动追踪每张照片的人脸，一键给「自己」贴趣味贴纸、给「背景路人」自动模糊打码。</div>
               </div>
               <div class="trust-card">
-                <div class="trust-icon">🎯</div>
-                <div class="trust-title" data-i18n="trust3Title">自动过滤背景路人</div>
-                <div class="trust-desc" data-i18n="trust3Desc">智能识别健身房画面里的「你」，支持 JPG / PNG / WEBP / iPhone HEIC。</div>
+                <div class="trust-icon">✨</div>
+                <div class="trust-title" data-i18n="trust3Title">多场景全能对齐</div>
+                <div class="trust-desc" data-i18n="trust3Desc">支持全身、双眼人脸、自定义两点对齐，兼容 JPG / PNG / WEBP / iPhone HEIC，断网也能用。</div>
               </div>
             </div>
 
@@ -235,10 +365,10 @@
         </div>
       </section>
 
-      <!-- Right Panel: Current Frame Fine-Tuning -->
+      <!-- Right Panel: Current Frame Fine-Tuning & Subject / 2-Point Picker -->
       <aside class="panel panel-right">
         <div class="panel-scroll" id="inspectorEmpty">
-          <div class="muted-center" data-i18n="inspectorEmpty">选择照片后，可在此逐帧微调对齐，或点击切换识别到的人物主体。</div>
+          <div class="muted-center" data-i18n="inspectorEmpty">选择照片后，可在此逐帧微调对齐、切换主体或标注自定义参照点。</div>
         </div>
 
         <div class="panel-scroll hidden" id="inspectorPanel">
@@ -253,19 +383,32 @@
                 <span id="lblItemEnabled">已保留</span>
               </label>
             </div>
+            <div class="inspector-quick-btns mt-8">
+              <button class="milestone-btn" id="btnMilestone" type="button" data-i18n="btnMilestoneOff">
+                ☆ 设为里程碑帧
+              </button>
+              <button class="color-ref-btn" id="btnSetColorRef" type="button" data-i18n="btnColorRefOff">
+                🎨 设为调色基准
+              </button>
+            </div>
             <div class="warning-box hidden" id="insWarning"></div>
           </section>
 
           <section class="card">
             <div class="card-head-row">
-              <h3 class="card-title" data-i18n="secSubject">主体选择（点击切换人物）</h3>
+              <h3 class="card-title" id="insPickerTitle" data-i18n="secSubject">主体选择（点击切换人物）</h3>
               <span class="badge" id="insCandCount">1</span>
             </div>
-            <div class="source-picker-wrap">
-              <img id="sourceImg" alt="Source Photo" />
+            <div class="source-picker-wrap" id="sourcePickerWrap">
+              <img id="sourceImg" alt="Source Photo" draggable="false" />
               <div id="candidateOverlay" class="candidate-overlay"></div>
+              <svg id="pointsOverlay" class="points-overlay hidden" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
             </div>
-            <div class="small-hint mt-6" data-i18n="subjectHint">如果某张合照误框选了背景路人，点击原图中你自己的方框即可重新对齐。</div>
+            <div id="pointsActions" class="points-actions hidden">
+              <button class="btn btn-secondary btn-xs" id="btnCopyPrevPts" type="button" data-i18n="btnCopyPrevPts">复制上一张点位</button>
+              <button class="btn btn-ghost btn-xs" id="btnClearPts" type="button" data-i18n="btnClearPts">清除点位</button>
+            </div>
+            <div class="small-hint mt-6" id="insPickerHint" data-i18n="subjectHint">如果多人照片误框选了路人，直接点击原图中你自己的方框即可重新对齐。</div>
           </section>
 
           <section class="card">
@@ -311,12 +454,15 @@
       <div class="filmstrip-head">
         <div class="filmstrip-stats" id="filmstripStats">-</div>
         <div class="filmstrip-controls">
+          <button class="btn btn-secondary btn-xs" id="btnSaveProject" type="button" data-i18n="btnSaveProject">💾 保存配置</button>
+          <label class="btn btn-secondary btn-xs" for="projectInput" data-i18n="btnLoadProject">📥 导入配置</label>
           <label class="btn btn-secondary btn-xs" for="fileInput" data-i18n="btnAddMore">+ 追加照片</label>
           <button class="btn btn-ghost btn-xs" id="btnClearAll" data-i18n="btnClearAll">清空重选</button>
           <select id="selSort" class="select-input select-sm">
             <option value="date_asc" data-i18n="sortDateAsc">按拍摄日期升序</option>
             <option value="date_desc" data-i18n="sortDateDesc">按拍摄日期降序</option>
             <option value="filename_asc" data-i18n="sortNameAsc">按文件名排序</option>
+            <option value="custom" data-i18n="sortCustom">手动拖拽排序</option>
           </select>
         </div>
       </div>
@@ -334,6 +480,37 @@
       <div class="modal-body">
         <p class="modal-desc" data-i18n="privModalLead"></p>
         <div id="privPointsList" class="priv-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Before / After Side-by-Side Comparison -->
+  <div class="modal-backdrop hidden" id="compareModal">
+    <div class="modal modal-xl">
+      <div class="modal-head">
+        <h3 data-i18n="cmpModalTitle">🪞 首尾对比图生成（Before / After）</h3>
+        <button class="icon-close" data-close="compareModal">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="compare-selectors">
+          <div class="compare-sel-col">
+            <label class="small-label" data-i18n="cmpLeftLbl">左侧（初始）</label>
+            <select id="selCmpLeft" class="select-input"></select>
+          </div>
+          <div class="compare-sel-col">
+            <label class="small-label" data-i18n="cmpRightLbl">右侧（最新）</label>
+            <select id="selCmpRight" class="select-input"></select>
+          </div>
+        </div>
+        <div class="compare-preview-wrap">
+          <img id="comparePreviewImg" alt="Before / After Comparison" />
+        </div>
+        <div class="export-privacy-bar" data-i18n="cmpPrivacyNote">
+          🔒 对比图已自动同步当前对齐构图、标签水印与人脸隐私打码，100% 本地生成。
+        </div>
+        <div class="export-actions">
+          <a class="btn btn-primary" id="btnDownloadCompare" download="eachday_before_after.png" data-i18n="cmpDownload">⬇️ 保存高清对比图 (PNG)</a>
+        </div>
       </div>
     </div>
   </div>

@@ -1,4 +1,7 @@
-/** 100% Local In-Browser H.264 MP4 Video Exporter using WebCodecs + mp4-muxer (with MediaRecorder fallback). */
+/**
+ * 100% Local In-Browser H.264 MP4 Video Exporter using WebCodecs + mp4-muxer (with MediaRecorder fallback).
+ * Supports milestone frame extra hold, smooth progress bar progression, crossfade, and Auto Color Match.
+ */
 
 import { Muxer, ArrayBufferTarget } from "https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/build/mp4-muxer.mjs";
 import { getCanvasSize, renderAlignedToCanvas } from "./renderer.js";
@@ -9,14 +12,7 @@ async function pickH264Config(width, height, bitrate, framerate) {
   }
   const codecs = ["avc1.640028", "avc1.4d0028", "avc1.420028", "avc1.42E01F"];
   for (const codec of codecs) {
-    const cfg = {
-      codec,
-      width,
-      height,
-      bitrate,
-      framerate,
-      avc: { format: "avc" },
-    };
+    const cfg = { codec, width, height, bitrate, framerate, avc: { format: "avc" } };
     try {
       const sup = await VideoEncoder.isConfigSupported(cfg);
       if (sup.supported) return cfg;
@@ -43,7 +39,7 @@ function blendCanvases(dstCanvas, prevCanvas, currCanvas, alpha) {
   ctx.globalAlpha = 1;
 }
 
-async function exportWithWebCodecs(enabledItems, settings, lang, onProgress) {
+async function exportWithWebCodecs(enabledItems, settings, lang, batchColorTarget, onProgress) {
   const [rawW, rawH] = getCanvasSize(settings);
   const width = rawW - (rawW % 2);
   const height = rawH - (rawH % 2);
@@ -71,7 +67,9 @@ async function exportWithWebCodecs(enabledItems, settings, lang, onProgress) {
 
   const photoFps = Math.max(1, Math.min(20, Number(settings.fps) || 6));
   const framesPerPhoto = Math.max(1, Math.round(streamFps / photoFps));
-  const blendFrames = settings.crossfade && framesPerPhoto >= 3 ? Math.max(1, Math.min(Math.floor(framesPerPhoto / 2), 4)) : 0;
+  const blendFrames =
+    settings.crossfade && framesPerPhoto >= 3 ? Math.max(1, Math.min(Math.floor(framesPerPhoto / 2), 4)) : 0;
+  const milestoneExtraFrames = Math.max(0, Math.round((Number(settings.milestoneHoldSec) || 0.8) * streamFps));
   const holdExtraFrames = Math.max(0, Math.round((Number(settings.holdLastSec) || 0) * streamFps));
 
   const currCanvas = makeCanvas(width, height);
@@ -79,6 +77,7 @@ async function exportWithWebCodecs(enabledItems, settings, lang, onProgress) {
   const mixCanvas = makeCanvas(width, height);
 
   const firstTs = enabledItems[0].timestamp;
+  const totalEnabled = enabledItems.length;
   const frameDurationUs = Math.round(1_000_000 / streamFps);
   let frameIndex = 0;
 
@@ -98,27 +97,33 @@ async function exportWithWebCodecs(enabledItems, settings, lang, onProgress) {
     }
   };
 
-  for (let i = 0; i < enabledItems.length; i++) {
-    if (onProgress) onProgress(i + 1, enabledItems.length, "encoding");
-    renderAlignedToCanvas(currCanvas, enabledItems[i], settings, {
+  for (let i = 0; i < totalEnabled; i++) {
+    const item = enabledItems[i];
+    if (onProgress) onProgress(i + 1, totalEnabled, "encoding");
+
+    renderAlignedToCanvas(currCanvas, item, settings, {
       seqIndex: i + 1,
+      totalEnabled,
       firstTimestamp: firstTs,
       drawGuides: false,
       lang,
+      batchColorTarget,
+      progressRatio: (i + 1) / totalEnabled,
     });
+
+    const extraMilestone = item.milestone ? milestoneExtraFrames : 0;
 
     if (i > 0 && blendFrames > 0) {
       for (let b = 1; b <= blendFrames; b++) {
         blendCanvases(mixCanvas, prevCanvas, currCanvas, b / (blendFrames + 1));
         await encodeCanvas(mixCanvas, 1);
       }
-      await encodeCanvas(currCanvas, Math.max(1, framesPerPhoto - blendFrames));
+      await encodeCanvas(currCanvas, Math.max(1, framesPerPhoto - blendFrames) + extraMilestone);
     } else {
-      await encodeCanvas(currCanvas, framesPerPhoto);
+      await encodeCanvas(currCanvas, framesPerPhoto + extraMilestone);
     }
 
     prevCanvas.getContext("2d").drawImage(currCanvas, 0, 0);
-    // Yield briefly to keep UI responsive
     await new Promise((res) => setTimeout(res, 0));
   }
 
@@ -126,7 +131,7 @@ async function exportWithWebCodecs(enabledItems, settings, lang, onProgress) {
     await encodeCanvas(currCanvas, holdExtraFrames);
   }
 
-  if (onProgress) onProgress(enabledItems.length, enabledItems.length, "finalizing");
+  if (onProgress) onProgress(totalEnabled, totalEnabled, "finalizing");
   await encoder.flush();
   encoder.close();
   if (encodeError) throw encodeError;
@@ -138,7 +143,7 @@ async function exportWithWebCodecs(enabledItems, settings, lang, onProgress) {
   };
 }
 
-async function exportWithMediaRecorder(enabledItems, settings, lang, onProgress) {
+async function exportWithMediaRecorder(enabledItems, settings, lang, batchColorTarget, onProgress) {
   const [rawW, rawH] = getCanvasSize(settings);
   const width = rawW - (rawW % 2);
   const height = rawH - (rawH % 2);
@@ -165,30 +170,36 @@ async function exportWithMediaRecorder(enabledItems, settings, lang, onProgress)
   });
 
   const firstTs = enabledItems[0].timestamp;
+  const totalEnabled = enabledItems.length;
   const msPerPhoto = Math.round(1000 / Math.max(1, Number(settings.fps) || 6));
+  const milestoneMs = Math.round((Number(settings.milestoneHoldSec) || 0.8) * 1000);
   const holdMs = Math.round((Number(settings.holdLastSec) || 0) * 1000);
 
   recorder.start();
-  for (let i = 0; i < enabledItems.length; i++) {
-    if (onProgress) onProgress(i + 1, enabledItems.length, "encoding");
-    renderAlignedToCanvas(canvas, enabledItems[i], settings, {
+  for (let i = 0; i < totalEnabled; i++) {
+    const item = enabledItems[i];
+    if (onProgress) onProgress(i + 1, totalEnabled, "encoding");
+    renderAlignedToCanvas(canvas, item, settings, {
       seqIndex: i + 1,
+      totalEnabled,
       firstTimestamp: firstTs,
       drawGuides: false,
       lang,
+      batchColorTarget,
+      progressRatio: (i + 1) / totalEnabled,
     });
-    await new Promise((r) => setTimeout(r, msPerPhoto));
+    await new Promise((r) => setTimeout(r, msPerPhoto + (item.milestone ? milestoneMs : 0)));
   }
   if (holdMs > 0) await new Promise((r) => setTimeout(r, holdMs));
   recorder.stop();
   return done;
 }
 
-export async function exportTimelapseLocal(items, settings, lang, onProgress) {
+export async function exportTimelapseLocal(items, settings, lang, batchColorTarget, onProgress) {
   const enabled = items.filter((it) => it.enabled);
   if (!enabled.length) throw new Error("No enabled photos to export.");
 
-  const wc = await exportWithWebCodecs(enabled, settings, lang, onProgress);
+  const wc = await exportWithWebCodecs(enabled, settings, lang, batchColorTarget, onProgress);
   if (wc) return wc;
-  return exportWithMediaRecorder(enabled, settings, lang, onProgress);
+  return exportWithMediaRecorder(enabled, settings, lang, batchColorTarget, onProgress);
 }

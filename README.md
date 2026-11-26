@@ -2,7 +2,7 @@
 
 # EachDay
 
-**Automatically align yourself across daily gym progress photos and turn them into smooth timelapse videos.**
+**Turn your daily photos into rock-steady timelapse videos — 100% locally in your browser.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Try Online: 100% Local](https://img.shields.io/badge/Live%20Web%20App-100%25%20Local%20%2F%20Zero%20Upload-10b981.svg)](https://semico.github.io/Each-Day/)
@@ -17,32 +17,34 @@ English | [简体中文](README.zh-CN.md)
 > ### 🌐 Try It Instantly in Your Browser — 100% Local & Private
 > **[Open EachDay Web Studio →](https://semico.github.io/Each-Day/)**
 >
-> **Zero uploads. Zero backend.** AI pose detection (`YOLO11-Pose` via ONNX Runtime Web), subject locking, alignment, and MP4 encoding all run **100% locally inside your browser**. Your photos never leave your device—you can even disconnect Wi-Fi after loading the page.
+> **Zero uploads. Zero backend.** AI alignment (`YOLO11-Pose` via ONNX Runtime Web), face privacy stickers/blur, Before/After card generation, and MP4 encoding all run **100% locally inside your browser**. Your photos never leave your device—you can even disconnect Wi-Fi after loading the page.
 
-Take a mirror selfie after every workout? **EachDay** detects your body pose across all your photos, filters out random gym-goers in the background, aligns your head, shoulders, and torso to the exact same scale and position, and exports a crisp H.264 MP4 timelapse—all running **100% locally** on your machine.
+Documenting **gym progress, daily selfies ("Photo a Day"), baby growth, OOTD outfits, pregnancy, skincare, pets, houseplants, or room renovations**? **EachDay** aligns every photo to the exact same scale, position, and angle, then exports a crisp H.264 MP4 timelapse or Before/After comparison card—all running **100% locally**.
 
 <p align="center">
-  <img src="docs/demo.gif" alt="EachDay aligned gym progress timelapse studio demo" width="640" />
+  <img src="docs/demo.gif" alt="EachDay aligned progress timelapse studio demo" width="640" />
 </p>
 
 ## Features
 
-- **Multi-Person Pose Detection + Subject Locking (`YOLO11-Pose`)**  
-  Detects every person in the frame and automatically locks onto *you* using foreground prominence, upright posture cues, and cross-photo head appearance matching—even when people walk or bend over right behind you in the gym.
-- **Self-Calibrating Body Alignment**  
-  Learns your natural shoulder-to-torso and head-to-torso proportions across the entire batch, aligns every frame smoothly regardless of distance to the mirror, and levels tilt relative to your natural standing posture so gym walls stay straight.
+- **3 Universal Alignment Modes**
+  - **🏋️ Body / Full-Body Mode** — Self-calibrating head/shoulder/torso alignment for gym progress, OOTD, pregnancy, and kids' height growth (automatically ignores background people).
+  - **🤳 Face / Eye-Line Mode** — Locks both eyes to the exact same horizontal line and scale across years of daily selfies, baby growth, skincare, braces, or haircut/beard changes.
+  - **🎯 2-Point Custom Object Mode** — Click any two reference points (`A → B`) to align pets, houseplants, desk setups, renovations, paintings, or coffee art with zero AI constraints.
+- **One-Click Automatic Face Privacy Mask & Stickers**  
+  Auto-tracks faces across every frame to apply clean emoji stickers (`😎`, `🙂`, `🐱`, `🐻`, `🤖`, `✨`, `🏋️`), smooth blur, or pixelation to **your own face** and/or **background bystanders**—ready to share safely on social media.
+- **One-Click Auto Exposure & Color Consistency Match**  
+  Normalizes brightness and white balance across photos taken under different lighting conditions (soft highlight roll-off, adjustable strength) so timelapses stay cinematic and flicker-free.
+- **Custom Labels, Progress Bar, Milestone Stars & Before/After Card**  
+  Supports EXIF chronological sorting (`JPG`, `PNG`, `WEBP`, iPhone `HEIC/HEIF`), custom watermark prefixes (e.g. `Day 01`, `OOTD #12`, `Baby Day 90`), animated top/bottom timeline progress bar, drag-to-reorder filmstrip, starred milestone frames (`M`) that hold longer, and **1-click high-res Before/After side-by-side PNG export**.
+- **Save & Resume Project Config (`.eachday.json`)**  
+  Export a lightweight JSON project file containing your settings, per-frame tweaks, 2-point anchors, custom order, and milestone stars (zero photo pixels), then reload it anytime when you add new progress photos.
 - **Natural Gaussian Blur Edge Fill**  
-  When zooming or shifting exposes areas outside the original photo, EachDay blends a softly feathered Gaussian-blurred background instead of harsh black bars (with optional `black` or `edge` modes).
-- **EXIF Chronological Sorting & Watermarks**  
-  Supports `JPG`, `PNG`, `WEBP`, and iPhone `HEIC/HEIF`. Automatically sorts by EXIF capture date and renders optional frosted pill watermarks like `Day 01 · 2026.05.12`.
-- **Interactive Local Web Studio**  
-  - Import from a **local folder**, **drag-and-drop upload**, or directly from a **macOS Photos album**
-  - **Onion-skin overlay** (`O`) & **alignment guides** (`G`) to inspect frame-to-frame precision
-  - **Live playback preview** (`Space`) before exporting
-  - **One-click subject switching** on the original photo if a crowded shot ever picks someone else
-  - **Drag / scroll fine-tuning** and instant frame skip (`X`)
-- **Zero-Setup H.264 MP4 Export**  
-  Uses bundled `imageio-ffmpeg` (no separate FFmpeg install needed) with `9:16`, `3:4`, `4:5`, and `1:1` aspect ratios, `1080p` / `720p`, configurable FPS, final-frame hold, and optional crossfade transitions.
+  Blends a softly feathered Gaussian-blurred background whenever cropping/zooming exposes edges outside the original frame (with optional `black` or `edge` modes).
+- **Interactive Local Studio & Zero-Setup MP4 Export**  
+  - **Onion-skin overlay** (`O`), **mode-specific alignment guides** (`G`), **live playback preview** (`Space`), **1-click subject switching**, and drag/scroll fine-tuning
+  - Exports universally playable H.264 MP4 (`9:16`, `3:4`, `4:5`, `1:1`; `1080p`/`720p`; configurable FPS, final-frame hold & crossfade)
+  - Optional local Python desktop version also supports direct **macOS Photos app album** import and headless CLI batch export.
 
 ## Installation
 

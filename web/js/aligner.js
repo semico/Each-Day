@@ -1,4 +1,9 @@
-/** Self-calibrating body alignment and cross-photo subject locking (100% in-browser). */
+/**
+ * Self-calibrating multi-mode alignment engine (100% in-browser):
+ *   - "body":   Full/upper body alignment (gym progress, OOTD, pregnancy, standing growth)
+ *   - "face":   Eye-line & facial feature alignment (daily selfie, baby growth, skincare, hair/beard)
+ *   - "points": Universal 2-point anchor alignment (pets, plants, renovations, art, any object)
+ */
 
 function median(arr) {
   if (!arr.length) return 0;
@@ -20,7 +25,7 @@ let headScratchCtx = null;
 
 /**
  * Extract a compact lighting-normalized head/face descriptor (YCbCr color histogram + 3x3x8 gradient HOG)
- * to distinguish the user from background gym-goers in multi-person photos.
+ * to distinguish the user from background people in multi-person photos.
  */
 export function extractHeadDescriptor(srcCanvas, candidate) {
   const w = srcCanvas.width;
@@ -61,7 +66,6 @@ export function extractHeadDescriptor(srcCanvas, candidate) {
   headScratchCtx.drawImage(srcCanvas, ix1, iy1, ix2 - ix1, iy2 - iy1, 0, 0, 48, 48);
   const img = headScratchCtx.getImageData(0, 0, 48, 48).data;
 
-  // 1. YCbCr chrominance + coarse luma histogram (40 bins)
   const histY = new Float32Array(8);
   const histCb = new Float32Array(16);
   const histCr = new Float32Array(16);
@@ -89,7 +93,6 @@ export function extractHeadDescriptor(srcCanvas, candidate) {
   colorVec.set(histCr, 24);
   l2Normalize(colorVec);
 
-  // 2. Coarse 3x3x8 gradient orientation histogram (72 bins)
   const mean = graySum / (48 * 48);
   let varSum = 0;
   for (let i = 0; i < gray.length; i++) {
@@ -165,7 +168,8 @@ export function extractAnchors(candidate) {
 
   if (lm.left_hip && lm.right_hip && lm.left_hip.confidence >= 0.3 && lm.right_hip.confidence >= 0.3) {
     anchors.hip = [
-      (lm.left_hip.x + lm.right_hip.x) * 0.5,
+      (lm.left_hip[0] !== undefined ? lm.left_hip[0] : lm.left_hip.x) * 0.5 +
+        (lm.right_hip[0] !== undefined ? lm.right_hip[0] : lm.right_hip.x) * 0.5,
       (lm.left_hip.y + lm.right_hip.y) * 0.5,
       Math.min(lm.left_hip.confidence, lm.right_hip.confidence),
     ];
@@ -180,33 +184,55 @@ export function calibrateBodyProportions(items) {
   const swRatios = [];
   const headRatios = [];
   const rollAngles = [];
+  const earToEyeRatios = [];
+  const noseToEyeRatios = [];
 
   for (const item of items) {
     if (!item.candidates.length || item.selectedCandidate >= item.candidates.length) continue;
     const cand = item.candidates[item.selectedCandidate];
+    const lm = cand.landmarks;
     const anchors = extractAnchors(cand);
-    if (!anchors.neck || !anchors.hip) continue;
 
-    const dx = anchors.neck[0] - anchors.hip[0];
-    const dy = anchors.neck[1] - anchors.hip[1];
-    const torso = Math.hypot(dx, dy);
-    if (torso < 18) continue;
+    // Body proportions
+    if (anchors.neck && anchors.hip) {
+      const dx = anchors.neck[0] - anchors.hip[0];
+      const dy = anchors.neck[1] - anchors.hip[1];
+      const torso = Math.hypot(dx, dy);
+      if (torso >= 18) {
+        if (dy < -12) rollAngles.push((Math.atan2(dx, -dy) * 180) / Math.PI);
+        if (anchors.l_shoulder && anchors.r_shoulder) {
+          const sw = Math.hypot(
+            anchors.l_shoulder[0] - anchors.r_shoulder[0],
+            anchors.l_shoulder[1] - anchors.r_shoulder[1]
+          );
+          const r = sw / torso;
+          if (r >= 0.35 && r <= 1.25) swRatios.push(r);
+        }
+        if (anchors.head) {
+          const hd = Math.hypot(anchors.head[0] - anchors.neck[0], anchors.head[1] - anchors.neck[1]);
+          const r = hd / torso;
+          if (r >= 0.15 && r <= 0.75) headRatios.push(r);
+        }
+      }
+    }
 
-    if (dy < -12) {
-      rollAngles.push((Math.atan2(dx, -dy) * 180) / Math.PI);
-    }
-    if (anchors.l_shoulder && anchors.r_shoulder) {
-      const sw = Math.hypot(
-        anchors.l_shoulder[0] - anchors.r_shoulder[0],
-        anchors.l_shoulder[1] - anchors.r_shoulder[1]
-      );
-      const r = sw / torso;
-      if (r >= 0.35 && r <= 1.25) swRatios.push(r);
-    }
-    if (anchors.head) {
-      const hd = Math.hypot(anchors.head[0] - anchors.neck[0], anchors.head[1] - anchors.neck[1]);
-      const r = hd / torso;
-      if (r >= 0.15 && r <= 0.75) headRatios.push(r);
+    // Face proportions (eye distance vs ear distance & nose distance)
+    if (lm.left_eye && lm.right_eye && lm.left_eye.confidence >= 0.35 && lm.right_eye.confidence >= 0.35) {
+      const eyeDist = Math.hypot(lm.left_eye.x - lm.right_eye.x, lm.left_eye.y - lm.right_eye.y);
+      if (eyeDist >= 8) {
+        if (lm.left_ear && lm.right_ear) {
+          const earDist = Math.hypot(lm.left_ear.x - lm.right_ear.x, lm.left_ear.y - lm.right_ear.y);
+          const r = earDist / eyeDist;
+          if (r >= 1.4 && r <= 3.2) earToEyeRatios.push(r);
+        }
+        if (lm.nose) {
+          const emx = (lm.left_eye.x + lm.right_eye.x) * 0.5;
+          const emy = (lm.left_eye.y + lm.right_eye.y) * 0.5;
+          const nd = Math.hypot(lm.nose.x - emx, lm.nose.y - emy);
+          const r = nd / eyeDist;
+          if (r >= 0.25 && r <= 1.1) noseToEyeRatios.push(r);
+        }
+      }
     }
   }
 
@@ -214,10 +240,15 @@ export function calibrateBodyProportions(items) {
     shoulderToTorso: swRatios.length ? median(swRatios) : 0.72,
     headToTorso: headRatios.length ? median(headRatios) : 0.34,
     naturalRollDeg: rollAngles.length >= 3 ? median(rollAngles) : 0,
+    earToEye: earToEyeRatios.length ? median(earToEyeRatios) : 2.1,
+    noseToEye: noseToEyeRatios.length ? median(noseToEyeRatios) : 0.58,
   };
 }
 
-export function computeCandidateTransform(item, candidate, proportions) {
+/**
+ * Mode 1: Body / Torso alignment (Gym, OOTD, Pregnancy, Full-Body Growth).
+ */
+export function computeBodyTransform(item, candidate, proportions) {
   const anchors = extractAnchors(candidate);
   const estimates = [];
 
@@ -252,8 +283,7 @@ export function computeCandidateTransform(item, candidate, proportions) {
     const [, by1, , by2] = candidate.bbox;
     torsoPx = Math.max(30, (by2 - by1) * 0.34);
   } else {
-    const vals = estimates.map((e) => e[0]);
-    const med = median(vals);
+    const med = median(estimates.map((e) => e[0]));
     let num = 0,
       den = 0;
     for (const [v, w] of estimates) {
@@ -271,7 +301,6 @@ export function computeCandidateTransform(item, candidate, proportions) {
     torsoPx = num / den;
   }
 
-  // Relative roll correction (subtracting natural one-handed selfie posture bias)
   let rawAngle = 0;
   if (anchors.neck && anchors.hip) {
     const dx = anchors.neck[0] - anchors.hip[0];
@@ -283,9 +312,7 @@ export function computeCandidateTransform(item, candidate, proportions) {
     if (dy < -8) rawAngle = ((Math.atan2(dx, -dy) * 180) / Math.PI) * 0.7;
   }
 
-  // Positive angleDeg means CCW rotation needed to level upright (same convention as OpenCV)
   const angleDeg = Math.max(-8, Math.min(8, (rawAngle - proportions.naturalRollDeg) * 0.75));
-
   const rad = (angleDeg * Math.PI) / 180;
   const upX = Math.sin(rad);
   const upY = -Math.cos(rad);
@@ -300,11 +327,7 @@ export function computeCandidateTransform(item, candidate, proportions) {
     ]);
   }
   if (anchors.hip) {
-    preds.push([
-      anchors.hip[0] + upX * torsoPx,
-      anchors.hip[1] + upY * torsoPx,
-      2.2 * anchors.hip[2],
-    ]);
+    preds.push([anchors.hip[0] + upX * torsoPx, anchors.hip[1] + upY * torsoPx, 2.2 * anchors.hip[2]]);
   }
 
   let srcCx, srcCy;
@@ -339,10 +362,205 @@ export function computeCandidateTransform(item, candidate, proportions) {
 }
 
 /**
- * Use cross-photo head descriptors to lock onto the user in multi-person gym shots,
- * then self-calibrate body proportions and compute transforms for all items.
+ * Mode 2: Face / Eyes alignment ("Photo a Day", Baby Growth, Skincare, Haircut, Braces).
+ * Locks left_eye & right_eye onto exact horizontal target eye line.
  */
-export function finalizeBatchAlignment(items) {
+export function computeFaceTransform(item, candidate, proportions) {
+  const lm = candidate.landmarks;
+  const lEye = lm.left_eye;
+  const rEye = lm.right_eye;
+  const lEar = lm.left_ear;
+  const rEar = lm.right_ear;
+  const nose = lm.nose;
+
+  const estimates = [];
+  let angleDeg = 0;
+
+  // Notice in COCO/image coordinates: person's right_eye is visually on the LEFT (smaller x),
+  // person's left_eye is visually on the RIGHT (larger x). Sort by x so vector always points left -> right!
+  if (lEye && rEye && lEye.confidence >= 0.25 && rEye.confidence >= 0.25) {
+    const [leftPt, rightPt] = lEye.x <= rEye.x ? [lEye, rEye] : [rEye, lEye];
+    const dx = rightPt.x - leftPt.x;
+    const dy = rightPt.y - leftPt.y;
+    const d = Math.hypot(dx, dy);
+    if (d >= 6) {
+      estimates.push([d, 4.0 * Math.min(lEye.confidence, rEye.confidence)]);
+      // If right eye is lower (dy > 0), head tilts CW -> rotate CCW (+angleDeg) to level
+      angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+    }
+  }
+
+  if (lEar && rEar && lEar.confidence >= 0.25 && rEar.confidence >= 0.25) {
+    const [leftPt, rightPt] = lEar.x <= rEar.x ? [lEar, rEar] : [rEar, lEar];
+    const d = Math.hypot(rightPt.x - leftPt.x, rightPt.y - leftPt.y);
+    if (d >= 12) {
+      estimates.push([d / proportions.earToEye, 1.4 * Math.min(lEar.confidence, rEar.confidence)]);
+      if (angleDeg === 0) {
+        angleDeg = (Math.atan2(rightPt.y - leftPt.y, rightPt.x - leftPt.x) * 180) / Math.PI;
+      }
+    }
+  }
+
+  if (candidate.faceBbox) {
+    const fw = candidate.faceBbox[2] - candidate.faceBbox[0];
+    if (fw >= 14) estimates.push([fw * 0.44, 0.9]);
+  }
+
+  // Fallback if only shoulders visible
+  if (!estimates.length && lm.left_shoulder && lm.right_shoulder) {
+    const sw = Math.hypot(lm.left_shoulder.x - lm.right_shoulder.x, lm.left_shoulder.y - lm.right_shoulder.y);
+    estimates.push([sw * 0.28, 0.6]);
+  }
+
+  let eyeDistPx;
+  if (!estimates.length) {
+    eyeDistPx = Math.max(20, Math.min(item.width, item.height) * 0.14);
+  } else {
+    const med = median(estimates.map((e) => e[0]));
+    let num = 0,
+      den = 0;
+    for (const [v, w] of estimates) {
+      if (Math.abs(v - med) <= med * 0.35) {
+        num += v * w;
+        den += w;
+      }
+    }
+    eyeDistPx = den > 0 ? num / den : estimates[0][0];
+  }
+
+  angleDeg = Math.max(-22, Math.min(22, angleDeg * 0.9));
+
+  // Eye-line center anchor
+  let srcCx, srcCy;
+  if (lEye && rEye) {
+    srcCx = (lEye.x + rEye.x) * 0.5;
+    srcCy = (lEye.y + rEye.y) * 0.5;
+  } else if (nose) {
+    const rad = (angleDeg * Math.PI) / 180;
+    // Eyes sit slightly above nose along head-up axis
+    srcCx = nose.x - Math.sin(rad) * eyeDistPx * proportions.noseToEye * 0.7;
+    srcCy = nose.y - Math.cos(rad) * eyeDistPx * proportions.noseToEye * 0.7;
+  } else if (candidate.faceBbox) {
+    srcCx = (candidate.faceBbox[0] + candidate.faceBbox[2]) * 0.5;
+    srcCy = candidate.faceBbox[1] + (candidate.faceBbox[3] - candidate.faceBbox[1]) * 0.42;
+  } else {
+    srcCx = item.width * 0.5;
+    srcCy = item.height * 0.35;
+  }
+
+  const prev = item.transform || {};
+  return {
+    srcCx,
+    srcCy,
+    scale: 1 / Math.max(8, eyeDistPx),
+    angleDeg,
+    userDx: prev.userDx || 0,
+    userDy: prev.userDy || 0,
+    userScale: prev.userScale || 1,
+    userAngleDeg: prev.userAngleDeg || 0,
+  };
+}
+
+/**
+ * Mode 3: Universal 2-Point Anchor alignment (Pets, Plants, Renovations, Sketches, Coffee Art, Any Object).
+ * Aligns user-placed points A & B onto the canonical span, preserving the natural orientation of the reference frame
+ * so horizontal, vertical, or diagonal point pairs all stay upright without awkward 45-degree tilts.
+ */
+export function computePointsTransform(item, referenceAngleDeg = null) {
+  const prev = item.transform || {};
+  const pts = item.customPoints;
+  if (!pts || pts.length < 2) {
+    return {
+      srcCx: item.width * 0.5,
+      srcCy: item.height * 0.5,
+      scale: 1 / Math.max(40, Math.min(item.width, item.height) * 0.4),
+      angleDeg: 0,
+      userDx: prev.userDx || 0,
+      userDy: prev.userDy || 0,
+      userScale: prev.userScale || 1,
+      userAngleDeg: prev.userAngleDeg || 0,
+    };
+  }
+
+  const [pA, pB] = pts;
+  const dx = pB.x - pA.x;
+  const dy = pB.y - pA.y;
+  const dist = Math.max(10, Math.hypot(dx, dy));
+  const rawAngle = (Math.atan2(dy, dx) * 180) / Math.PI;
+
+  // Compute smallest signed angular difference relative to reference A->B angle (or nearest horizontal/vertical axis)
+  let targetRef = referenceAngleDeg;
+  if (targetRef === null || targetRef === undefined) {
+    // Snap single/first photo to nearest cardinal axis (0, 90, -90, 180) only if already close, else keep upright (0 rotation)
+    targetRef = rawAngle;
+  }
+  let diff = ((rawAngle - targetRef + 540) % 360) - 180;
+  const angleDeg = Math.max(-35, Math.min(35, diff));
+
+  return {
+    srcCx: (pA.x + pB.x) * 0.5,
+    srcCy: (pA.y + pB.y) * 0.5,
+    scale: 1 / dist,
+    angleDeg,
+    userDx: prev.userDx || 0,
+    userDy: prev.userDy || 0,
+    userScale: prev.userScale || 1,
+    userAngleDeg: prev.userAngleDeg || 0,
+  };
+}
+
+export function getReferencePointsAngle(items) {
+  for (const it of items) {
+    if (it.customPoints && it.customPoints.length >= 2) {
+      const [pA, pB] = it.customPoints;
+      return (Math.atan2(pB.y - pA.y, pB.x - pA.x) * 180) / Math.PI;
+    }
+  }
+  return null;
+}
+
+export function computeCandidateTransform(item, candidate, proportions, alignMode = "body", referenceAngleDeg = null) {
+  if (alignMode === "points") {
+    return computePointsTransform(item, referenceAngleDeg);
+  }
+  if (!candidate) {
+    const prev = item.transform || {};
+    return {
+      srcCx: item.width * 0.5,
+      srcCy: item.height * (alignMode === "face" ? 0.4 : 0.32),
+      scale: 1 / Math.max(40, item.height * (alignMode === "face" ? 0.14 : 0.28)),
+      angleDeg: 0,
+      userDx: prev.userDx || 0,
+      userDy: prev.userDy || 0,
+      userScale: prev.userScale || 1,
+      userAngleDeg: prev.userAngleDeg || 0,
+    };
+  }
+  if (alignMode === "face") {
+    return computeFaceTransform(item, candidate, proportions);
+  }
+  return computeBodyTransform(item, candidate, proportions);
+}
+
+/**
+ * Recompute transforms for an entire batch when switching alignment mode (body / face / points)
+ * without re-running pose inference.
+ */
+export function recomputeBatchTransforms(items, proportions, alignMode = "body") {
+  const refPtsAngle = alignMode === "points" ? getReferencePointsAngle(items) : null;
+  for (const item of items) {
+    const cand =
+      item.candidates.length && item.selectedCandidate < item.candidates.length
+        ? item.candidates[item.selectedCandidate]
+        : null;
+    item.transform = computeCandidateTransform(item, cand, proportions, alignMode, refPtsAngle);
+  }
+}
+
+/**
+ * Cross-photo identity matching + body/face proportion calibration + transform computation.
+ */
+export function finalizeBatchAlignment(items, alignMode = "body") {
   const refDescriptors = [];
   const multiIndices = [];
 
@@ -395,22 +613,6 @@ export function finalizeBatchAlignment(items) {
   }
 
   const proportions = calibrateBodyProportions(items);
-  for (const item of items) {
-    if (item.candidates.length && item.selectedCandidate < item.candidates.length) {
-      item.transform = computeCandidateTransform(item, item.candidates[item.selectedCandidate], proportions);
-    } else {
-      item.transform = {
-        srcCx: item.width * 0.5,
-        srcCy: item.height * 0.32,
-        scale: 1 / Math.max(60, item.height * 0.28),
-        angleDeg: 0,
-        userDx: item.transform?.userDx || 0,
-        userDy: item.transform?.userDy || 0,
-        userScale: item.transform?.userScale || 1,
-        userAngleDeg: item.transform?.userAngleDeg || 0,
-      };
-    }
-  }
-
+  recomputeBatchTransforms(items, proportions, alignMode);
   return proportions;
 }
